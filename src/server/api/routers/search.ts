@@ -1,46 +1,46 @@
-import { z } from 'zod';
-import { createTRPCRouter, publicProcedure } from '~/server/api/trpc';
+import { z } from "zod";
+import { createTRPCRouter, publicProcedure } from "~/server/api/trpc";
 
 const searchResultSchema = z.object({
-  page: z.string(),
-  total_clicks: z.number().nullable(),
-  best_query: z.string().nullable(),
-  best_query_clicks: z.number().nullable(),
-  best_query_position: z.number().nullable(),
-  // 前期數據
-  prev_best_query: z.string().nullable(),
-  prev_best_clicks: z.number().nullable(),
-  prev_best_position: z.number().nullable(),
-  traffic_change: z.string().nullable(),
-  position_change: z.string().nullable(),
-  // 統計數據
-  keywords_4to10_count: z.number().nullable(),
-  total_keywords: z.number().nullable(),
-  keywords_4to10_ratio: z.string().nullable(),
-  potential_traffic: z.number().nullable(),
-  weight_factor: z.string().nullable(),
-  potential_increase_pct: z.string().nullable(),
-  // 排名分布
-  rank_4: z.string().nullable(),
-  rank_5: z.string().nullable(),
-  rank_6: z.string().nullable(),
-  rank_7: z.string().nullable(),
-  rank_8: z.string().nullable(),
-  rank_9: z.string().nullable(),
-  rank_10: z.string().nullable()
+	page: z.string(),
+	total_clicks: z.number().nullable(),
+	best_query: z.string().nullable(),
+	best_query_clicks: z.number().nullable(),
+	best_query_position: z.number().nullable(),
+	// 前期數據
+	prev_best_query: z.string().nullable(),
+	prev_best_clicks: z.number().nullable(),
+	prev_best_position: z.number().nullable(),
+	traffic_change: z.string().nullable(),
+	position_change: z.string().nullable(),
+	// 統計數據
+	keywords_4to10_count: z.number().nullable(),
+	total_keywords: z.number().nullable(),
+	keywords_4to10_ratio: z.string().nullable(),
+	potential_traffic: z.number().nullable(),
+	weight_factor: z.string().nullable(),
+	potential_increase_pct: z.string().nullable(),
+	// 排名分布
+	rank_4: z.string().nullable(),
+	rank_5: z.string().nullable(),
+	rank_6: z.string().nullable(),
+	rank_7: z.string().nullable(),
+	rank_8: z.string().nullable(),
+	rank_9: z.string().nullable(),
+	rank_10: z.string().nullable(),
 });
 
 type SearchResult = z.infer<typeof searchResultSchema>;
 
 export const searchRouter = createTRPCRouter({
-  getSearchData: publicProcedure
-    .input(
-      z.object({
-        site: z.string().default('sc-domain:holidaysmart.io')
-      })
-    )
-    .query(async ({ input }) => {
-      const sql = `-- 日期設定區
+	getSearchData: publicProcedure
+		.input(
+			z.object({
+				site: z.string().default("sc-domain:holidaysmart.io"),
+			}),
+		)
+		.query(async ({ input }) => {
+			const sql = `-- 日期設定區
 WITH date_settings AS (
     SELECT 
         CURRENT_DATE - INTERVAL '7 days' as current_period_start,
@@ -237,52 +237,52 @@ WHERE ps.page_total_clicks > 50
 ORDER BY potential_traffic DESC NULLS LAST
 LIMIT 100;`;
 
-      try {
-        const response = await fetch(
-          'https://unbiased-remarkably-arachnid.ngrok-free.app/api/query',
-          {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'ngrok-skip-browser-warning': 'true'
-            },
-            body: JSON.stringify({
-              site: input.site,
-              sql: sql
-            })
-          }
-        );
+			try {
+				const response = await fetch(
+					"https://unbiased-remarkably-arachnid.ngrok-free.app/api/query",
+					{
+						method: "POST",
+						headers: {
+							"Content-Type": "application/json",
+							"ngrok-skip-browser-warning": "true",
+						},
+						body: JSON.stringify({
+							site: input.site,
+							sql: sql,
+						}),
+					},
+				);
 
-        if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`);
-        }
+				if (!response.ok) {
+					throw new Error(`HTTP error! status: ${response.status}`);
+				}
 
-        const data = await response.json();
-        console.log('API Response:', JSON.stringify(data, null, 2));
+				const data = await response.json();
+				console.log("API Response:", JSON.stringify(data, null, 2));
 
-        // Check if data is an array, if not try to extract it
-        let resultArray: SearchResult[] = [];
+				// Check if data is an array, if not try to extract it
+				let resultArray: SearchResult[] = [];
 
-        if (Array.isArray(data)) {
-          resultArray = data;
-        } else if (data && typeof data === 'object') {
-          // Try common response patterns
-          if (data.data && Array.isArray(data.data)) {
-            resultArray = data.data;
-          } else if (data.results && Array.isArray(data.results)) {
-            resultArray = data.results;
-          } else if (data.rows && Array.isArray(data.rows)) {
-            resultArray = data.rows;
-          } else {
-            console.warn('Unexpected response format, returning empty array');
-            resultArray = [];
-          }
-        }
+				if (Array.isArray(data)) {
+					resultArray = data;
+				} else if (data && typeof data === "object") {
+					// Try common response patterns
+					if (data.data && Array.isArray(data.data)) {
+						resultArray = data.data;
+					} else if (data.results && Array.isArray(data.results)) {
+						resultArray = data.results;
+					} else if (data.rows && Array.isArray(data.rows)) {
+						resultArray = data.rows;
+					} else {
+						console.warn("Unexpected response format, returning empty array");
+						resultArray = [];
+					}
+				}
 
-        return resultArray;
-      } catch (error) {
-        console.error('Error fetching search data:', error);
-        throw new Error('Failed to fetch search data');
-      }
-    })
+				return resultArray;
+			} catch (error) {
+				console.error("Error fetching search data:", error);
+				throw new Error("Failed to fetch search data");
+			}
+		}),
 });
