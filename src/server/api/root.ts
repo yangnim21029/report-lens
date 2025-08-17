@@ -1,7 +1,7 @@
+import { chatRouter } from "~/server/api/routers/chat";
+import { optimizeRouter } from "~/server/api/routers/optimize_en_chatgpt_v5";
 import { postRouter } from "~/server/api/routers/post";
 import { searchRouter } from "~/server/api/routers/search";
-import { optimizeRouter } from "~/server/api/routers/optimize";
-import { chatRouter } from "~/server/api/routers/chat";
 import { createCallerFactory, createTRPCRouter } from "~/server/api/trpc";
 
 /**
