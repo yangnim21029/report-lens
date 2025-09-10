@@ -8,7 +8,7 @@ import {
   formatAsCSV,
   formatAsEmail,
   formatAsMarkdown,
-} from "~/utils/analysisExtractor";
+} from "~/utils/extract-format-html";
 
 export const DataCard = memo(function DataCard({
   data,
@@ -71,6 +71,27 @@ export const DataCard = memo(function DataCard({
         alert("Failed to generate AI email. Using standard format.");
         // Fallback to standard format
         handleCopyToClipboard("email", true);
+      },
+    });
+
+  const { mutate: generateContextVector, isPending: isGeneratingContext } =
+    api.report.generateContextVector.useMutation({
+      onSuccess: async (result) => {
+        if (result.success && result.content) {
+          try {
+            await navigator.clipboard.writeText(result.content);
+            setCopiedFormat("csv");
+            setTimeout(() => setCopiedFormat(null), 2000);
+          } catch (e) {
+            alert("Failed to copy generated context vector to clipboard");
+          }
+        } else {
+          alert(`Failed to generate context vector: ${result.error || "unknown"}`);
+        }
+      },
+      onError: (err) => {
+        console.error("Context vector generation error:", err);
+        alert("Failed to generate context vector");
       },
     });
 
@@ -148,8 +169,9 @@ export const DataCard = memo(function DataCard({
             content = formatAsMarkdown(extractedData);
             break;
           case "csv":
-            content = formatAsCSV(extractedData);
-            break;
+            // Repurpose CSV to generate context vector using AI with raw analysis + original article
+            generateContextVector({ analysisText: analysis.analysis, pageUrl: data.page });
+            return; // handled asynchronously
           case "email":
             content = formatAsEmail(extractedData);
             break;
@@ -324,8 +346,8 @@ export const DataCard = memo(function DataCard({
               className="border border-[var(--gray-5)] bg-transparent px-[var(--space-sm)] py-[var(--space-sm)] font-bold text-[var(--gray-3)] text-[var(--text-xs)] uppercase transition-all duration-[var(--duration-fast)] hover:border-[var(--gray-4)] hover:bg-[var(--gray-8)]"
               title="Copy as CSV"
             >
-              {copiedFormat === "csv" ? "✓" : "CSV"}
-            </button>
+          {isGeneratingContext ? "..." : copiedFormat === "csv" ? "✓" : "CSV"}
+        </button>
             <button
               onClick={() => handleCopyToClipboard("email")}
               disabled={isGeneratingEmail}

@@ -11,7 +11,7 @@ import {
 	formatAsCSV,
 	formatAsEmail,
 	formatAsMarkdown,
-} from "~/utils/analysisExtractor";
+} from "~/utils/extract-format-html";
 
 export default function HomePage() {
 	const [site, setSite] = useState("sc-domain:holidaysmart.io");

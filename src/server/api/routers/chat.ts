@@ -4,7 +4,7 @@ import { createTRPCRouter, publicProcedure } from "~/server/api/trpc";
 import {
 	extractAnalysisData,
 	formatForGoogleChat,
-} from "~/utils/analysisExtractor";
+} from "~/utils/extract-format-html";
 
 export const chatRouter = createTRPCRouter({
 	sendAnalysisToChat: publicProcedure
