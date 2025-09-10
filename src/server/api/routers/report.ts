@@ -54,25 +54,38 @@ export const reportRouter = createTRPCRouter({
     )
     .mutation(async ({ input }) => {
       try {
-        // 1) Derive siteCode from hostname
+        // 1) Derive siteCode from hostname + path region
         const url = new URL(input.pageUrl);
         const host = url.hostname.replace(/^www\./, "");
-        const siteMap: Record<string, string> = {
-          "pretty.presslogic.com": "GS_HK",
-          "girlstyle.com": "GS_TW",
-          "holidaysmart.io": "HS_HK",
-          "urbanlifehk.com": "UL_HK",
-          "poplady-mag.com": "POP_HK",
-          "topbeautyhk.com": "TOP_HK",
-          "thekdaily.com": "KD_HK",
-          "businessfocus.io": "BF_HK",
-          "mamidaily.com": "MD_HK",
-          "thepetcity.co": "PET_HK",
+        const baseCodeMap: Record<string, string> = {
+          "pretty.presslogic.com": "GS",
+          "girlstyle.com": "GS",
+          "holidaysmart.io": "HS",
+          "urbanlifehk.com": "UL",
+          "poplady-mag.com": "POP",
+          "topbeautyhk.com": "TOP",
+          "thekdaily.com": "KD",
+          "businessfocus.io": "BF",
+          "mamidaily.com": "MD",
+          "thepetcity.co": "PET",
         };
-        const siteCode = siteMap[host];
-        if (!siteCode) {
-          throw new Error(`Unknown site for host: ${host}`);
-        }
+        const base = baseCodeMap[host];
+        if (!base) throw new Error(`Unknown site for host: ${host}`);
+
+        // infer region from path: /tw/ /hk/ /sg/ /my/ /cn/
+        const path = url.pathname.toLowerCase();
+        const region = path.includes("/tw/")
+          ? "TW"
+          : path.includes("/hk/")
+          ? "HK"
+          : path.includes("/sg/")
+          ? "SG"
+          : path.includes("/my/")
+          ? "MY"
+          : path.includes("/cn/")
+          ? "CN"
+          : "HK";
+        const siteCode = `${base}_${region}`;
 
         // 2) Extract resourceId from URL path: look for /article/{id}/
         const idMatch = url.pathname.match(/\/article\/(\d+)/i);
@@ -92,6 +105,28 @@ export const reportRouter = createTRPCRouter({
           throw new Error(`Proxy fetch failed: ${res.status}`);
         }
         const data = await res.json().catch(() => ({} as any));
+        // Log response shape for inspection
+        try {
+          console.log("[report] proxy.content response summary:", {
+            siteCode,
+            resourceId,
+            keys: Object.keys(data ?? {}),
+            has: {
+              content: typeof data?.content === "string",
+              dataContent: typeof data?.data?.content === "string",
+              html: typeof data?.html === "string",
+              text: typeof data?.text === "string",
+            },
+            lengths: {
+              content: typeof data?.content === "string" ? data.content.length : undefined,
+              dataContent:
+                typeof data?.data?.content === "string" ? data.data.content.length : undefined,
+              html: typeof data?.html === "string" ? data.html.length : undefined,
+              text: typeof data?.text === "string" ? data.text.length : undefined,
+            },
+            sample: (data?.content || data?.data?.content || data?.html || data?.text || "").slice(0, 200),
+          });
+        } catch {}
         // Try common fields for article text
         const article: string =
           data?.content || data?.data?.content || data?.html || data?.text || JSON.stringify(data);
@@ -113,6 +148,10 @@ export const reportRouter = createTRPCRouter({
         });
 
         const content = completion.choices[0]?.message?.content ?? "";
+
+        // for dev: show generated suggestion summary (first 200 chars)
+        try { console.log("[report] generated context vector (preview)", content.slice(0, 200)); } catch {}
+
         return { success: true as const, content };
       } catch (error) {
         console.error("report.generateContextVector error:", error);
