@@ -54,38 +54,33 @@ export const reportRouter = createTRPCRouter({
     )
     .mutation(async ({ input }) => {
       try {
-        // 1) Derive siteCode from hostname + path region
+        // 1) Derive siteCode based on hostname rules
         const url = new URL(input.pageUrl);
         const host = url.hostname.replace(/^www\./, "");
-        const baseCodeMap: Record<string, string> = {
-          "pretty.presslogic.com": "GS",
-          "girlstyle.com": "GS",
-          "holidaysmart.io": "HS",
-          "urbanlifehk.com": "UL",
-          "poplady-mag.com": "POP",
-          "topbeautyhk.com": "TOP",
-          "thekdaily.com": "KD",
-          "businessfocus.io": "BF",
-          "mamidaily.com": "MD",
-          "thepetcity.co": "PET",
-        };
-        const base = baseCodeMap[host];
-        if (!base) throw new Error(`Unknown site for host: ${host}`);
-
-        // infer region from path: /tw/ /hk/ /sg/ /my/ /cn/
         const path = url.pathname.toLowerCase();
-        const region = path.includes("/tw/")
-          ? "TW"
-          : path.includes("/hk/")
-          ? "HK"
-          : path.includes("/sg/")
-          ? "SG"
-          : path.includes("/my/")
-          ? "MY"
-          : path.includes("/cn/")
-          ? "CN"
-          : "HK";
-        const siteCode = `${base}_${region}`;
+
+        // Fixed mapping by host (no path-based region)
+        const fixedByHost: Record<string, string> = {
+          "pretty.presslogic.com": "GS_HK",
+          "girlstyle.com": "GS_TW",
+          "urbanlifehk.com": "UL_HK",
+          "poplady-mag.com": "POP_HK",
+          "topbeautyhk.com": "TOP_HK",
+          "thekdaily.com": "KD_HK",
+          "businessfocus.io": "BF_HK",
+          "mamidaily.com": "MD_HK",
+          "thepetcity.co": "PET_HK",
+        };
+
+        let siteCode: string | undefined;
+        if (host === "holidaysmart.io") {
+          // Holidaysmart: derive HK/TW from path explicitly
+          siteCode = path.includes("/tw/") ? "HS_TW" : "HS_HK";
+        } else if (fixedByHost[host]) {
+          siteCode = fixedByHost[host];
+        }
+
+        if (!siteCode) throw new Error(`Unknown or unsupported site for host: ${host}`);
 
         // 2) Extract resourceId from URL path: look for /article/{id}/
         const idMatch = url.pathname.match(/\/article\/(\d+)/i);
@@ -127,9 +122,16 @@ export const reportRouter = createTRPCRouter({
             sample: (data?.content || data?.data?.content || data?.html || data?.text || "").slice(0, 200),
           });
         } catch {}
-        // Try common fields for article text
+        // Extract article HTML/text from common shapes
         const article: string =
-          data?.content || data?.data?.content || data?.html || data?.text || JSON.stringify(data);
+          (typeof data?.content?.data?.post_content === "string"
+            ? data.content.data.post_content
+            : undefined) ||
+          (typeof data?.data?.content === "string" ? data.data.content : undefined) ||
+          (typeof data?.content === "string" ? data.content : undefined) ||
+          (typeof data?.html === "string" ? data.html : undefined) ||
+          (typeof data?.text === "string" ? data.text : undefined) ||
+          JSON.stringify(data);
 
         // 4) Build prompt
         const prompt = `${input.analysisText}\n-----\n\n\n\n因為不能新增新的一篇，幫我找出我應該增加的一段 context vector 內容，覆蓋關鍵字同時，也讓閱讀體驗更好（列出原文的段落類型，以及文章類型，以及該類型前/後/現有內容中，可以置入的一段內容）\n\n\n\n-----\n\n\n\n以下是原文：\n\n${article}`;
