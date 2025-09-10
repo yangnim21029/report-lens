@@ -202,11 +202,7 @@
 		}
 	}
 
-	@media (min-width: 1536px) {
-		.grid-editorial {
-			grid-template-columns: repeat(4, 1fr);
-		}
-	}
+    /* Cap at 3 columns even on ultra-wide screens to avoid overly wide rows */
 
 	/* Scroll Indicator */
 	.scroll-indicator {

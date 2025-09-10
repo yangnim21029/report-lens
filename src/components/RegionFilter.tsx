@@ -20,7 +20,7 @@ export function RegionFilter({ data, selectedRegion, onRegionChange }: RegionFil
           if (url.includes("/cn/")) return "cn";
           return null;
         })
-        .filter(Boolean)
+        .filter(Boolean) as Array<"hk" | "tw" | "sg" | "my" | "cn">
     )
   ).sort();
 

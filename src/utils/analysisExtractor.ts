@@ -108,7 +108,7 @@ export function extractAnalysisData(
 				"### Immediate Actions",
 				"### Optional Enhancements",
 			)
-		: null ||
+		:
 			extractSection(analysisText, "## 📝 Required Execution Items", null) ||
 			extractSection(analysisText, "## Required Execution Checklist", null) ||
 			extractSection(analysisText, "必備執行項目", "實施方式") ||
@@ -130,7 +130,8 @@ export function extractAnalysisData(
 					/^(最關鍵改動|次關鍵改動|第三項)[：:]\s*(.+)$/,
 				);
 				if (keyMatch && keyMatch[2]) {
-					const content = keyMatch[2].split("。理由：")[0].trim();
+					const [beforeReason = ""] = (keyMatch[2] ?? "").split("。理由：");
+					const content = beforeReason.trim();
 					if (content) {
 						executionList.push(content);
 					}
@@ -512,9 +513,10 @@ function parseEmailXML(xmlString: string): EmailFields | null {
 	try {
 		// 簡單的 XML 解析（不依賴外部庫）
 		const getXMLValue = (xml: string, tag: string): string => {
-			const regex = new RegExp(`<${tag}>([\s\S]*?)</${tag}>`, "i");
-			const match = xml.match(regex);
-			return match ? match[1].trim() : "";
+			const regex = new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`, "i");
+			const m = xml.match(regex) || [];
+			const captured = (m as RegExpMatchArray)[1] ?? "";
+			return captured.trim();
 		};
 
 		const subject = getXMLValue(xmlString, "subject");

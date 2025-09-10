@@ -226,7 +226,7 @@ function AnalysisModalComponent({
 									<div className="whitespace-pre-wrap text-[var(--gray-2)] text-[var(--text-base)] leading-relaxed">
 										{getTabContent()
 											.split("\n")
-											.map((line, i) => {
+											.map((line: string, i: number) => {
 												// Format headers
 												if (line.startsWith("###")) {
 													return (

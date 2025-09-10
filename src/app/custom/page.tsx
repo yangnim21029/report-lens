@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useMemo } from "react";
 import Link from "next/link";
-import { DataCard } from "../page";
+import { DataCard } from "~/components/DataCard";
 import { CopyButton } from "~/components/CopyButton";
 import { RegionFilter } from "~/components/RegionFilter";
 
@@ -75,7 +75,7 @@ export default function CustomPage() {
 
     const rows: CSVRow[] = [];
     for (let i = 1; i < lines.length; i++) {
-      const line = lines[i];
+      const line = lines[i] ?? "";
       if (!line.trim()) continue;
       
       const values = parseCSVLine(line);
