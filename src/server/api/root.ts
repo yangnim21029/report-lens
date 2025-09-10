@@ -1,5 +1,6 @@
 import { chatRouter } from "~/server/api/routers/chat";
-import { optimizeRouter } from "~/server/api/routers/optimize_en_chatgpt_v5";
+import { optimizeRouter } from "~/server/api/routers/optimize_en_chatgpt";
+import { reportRouter } from "~/server/api/routers/report";
 import { postRouter } from "~/server/api/routers/post";
 import { searchRouter } from "~/server/api/routers/search";
 import { createCallerFactory, createTRPCRouter } from "~/server/api/trpc";
@@ -14,6 +15,7 @@ export const appRouter = createTRPCRouter({
 	search: searchRouter,
 	optimize: optimizeRouter,
 	chat: chatRouter,
+	report: reportRouter,
 });
 
 // export type definition of API

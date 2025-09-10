@@ -47,7 +47,7 @@ export const DataCard = memo(function DataCard({
   });
 
   const { mutate: generateAIEmail, isPending: isGeneratingEmail } =
-    api.optimize.generateAIEmail.useMutation({
+    api.report.generateEmail.useMutation({
       onSuccess: async (result) => {
         if (result.success && result.emailContent) {
           try {
