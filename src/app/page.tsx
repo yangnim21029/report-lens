@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState, useMemo } from "react";
 import { AnalysisModal } from "~/components/AnalysisModal";
+import { RegionFilter } from "~/components/RegionFilter";
 import { api } from "~/trpc/react";
 import {
 	extractAnalysisData,
@@ -16,6 +17,7 @@ export default function HomePage() {
 	const [expandedRow, setExpandedRow] = useState<number | null>(null);
 	const [isMounted, setIsMounted] = useState(false);
 	const [hasOpenModal, setHasOpenModal] = useState(false);
+	const [selectedRegion, setSelectedRegion] = useState<string>("all");
 	const scrollIndicatorRef = useRef<HTMLDivElement>(null);
 	const { data, isLoading, error, refetch } = api.search.getSearchData.useQuery(
 		{ site },
@@ -56,9 +58,16 @@ export default function HomePage() {
 		return () => window.removeEventListener("scroll", handleScroll);
 	}, [hasOpenModal]);
 
+	// Filter data based on selected region
+	const filteredData = useMemo(() => {
+		if (!data || selectedRegion === "all") return data || [];
+		return data.filter(row => row.page.includes(`/${selectedRegion}/`));
+	}, [data, selectedRegion]);
+
 	const handleSearch = () => {
 		refetch();
 		setExpandedRow(null);
+		setSelectedRegion("all"); // Reset filter when searching
 	};
 
 	const handleKeyPress = (e: React.KeyboardEvent) => {
@@ -170,13 +179,20 @@ export default function HomePage() {
 								SEMANTIC OPPORTUNITIES
 							</h2>
 							<p className="text-[var(--gray-4)]">
-								{data.length} pages with hijacking potential
+								{filteredData.length} of {data.length} pages with hijacking potential
 							</p>
 						</div>
 
+						{/* Region Filter */}
+						<RegionFilter 
+							data={data}
+							selectedRegion={selectedRegion}
+							onRegionChange={setSelectedRegion}
+						/>
+
 						{/* Data Grid - Cards Layout */}
 						<div className="grid-editorial">
-							{data.map((row, index) => (
+							{filteredData.map((row, index) => (
 								<DataCard
 									key={index}
 									data={row}
@@ -268,6 +284,34 @@ export const DataCard = memo(function DataCard({
 		},
 	});
 
+	const { mutate: generateAIEmail, isPending: isGeneratingEmail } = 
+		api.optimize.generateAIEmail.useMutation({
+			onSuccess: async (result) => {
+				if (result.success && result.emailContent) {
+					try {
+						await navigator.clipboard.writeText(result.emailContent);
+						setCopiedFormat("email");
+						setTimeout(() => {
+							setCopiedFormat(null);
+						}, 2000);
+					} catch (error) {
+						console.error("Failed to copy to clipboard:", error);
+						alert("Failed to copy to clipboard");
+					}
+				} else {
+					alert("Failed to generate AI email. Using standard format.");
+					// Fallback to standard format
+					handleCopyToClipboard("email", true);
+				}
+			},
+			onError: (error) => {
+				console.error("AI email generation error:", error);
+				alert("Failed to generate AI email. Using standard format.");
+				// Fallback to standard format
+				handleCopyToClipboard("email", true);
+			},
+		});
+
 	const handleAnalyze = useCallback(() => {
 		if (!hasAnalyzed && !isLoading) {
 			setHasAnalyzed(true);
@@ -314,9 +358,22 @@ export const DataCard = memo(function DataCard({
 	}, [analysis, sendToChat, data]);
 
 	const handleCopyToClipboard = useCallback(
-		async (format: "markdown" | "csv" | "email") => {
+		async (format: "markdown" | "csv" | "email", isStandardFallback = false) => {
 			if (!analysis || !analysis.analysis) return;
 
+			// For email format and not a fallback, try AI generation first
+			if (format === "email" && !isStandardFallback && !isGeneratingEmail) {
+				generateAIEmail({
+					analysisText: analysis.analysis,
+					pageData: {
+						page: data.page,
+						best_query: data.best_query || "",
+					},
+				});
+				return;
+			}
+
+			// Standard format handling (for non-email or fallback)
 			try {
 				const extractedData = extractAnalysisData(analysis.analysis, {
 					page: data.page,
@@ -348,7 +405,7 @@ export const DataCard = memo(function DataCard({
 				alert("Failed to copy to clipboard");
 			}
 		},
-		[analysis, data],
+		[analysis, data, generateAIEmail, isGeneratingEmail],
 	);
 
 	// Get click intensity for visual indicator
@@ -509,10 +566,11 @@ export const DataCard = memo(function DataCard({
 							</button>
 							<button
 								onClick={() => handleCopyToClipboard("email")}
-								className="border border-[var(--gray-5)] bg-transparent px-[var(--space-sm)] py-[var(--space-sm)] font-bold text-[var(--gray-3)] text-[var(--text-xs)] uppercase transition-all duration-[var(--duration-fast)] hover:border-[var(--gray-4)] hover:bg-[var(--gray-8)]"
-								title="Copy as Email"
+								disabled={isGeneratingEmail}
+								className="border border-[var(--gray-5)] bg-transparent px-[var(--space-sm)] py-[var(--space-sm)] font-bold text-[var(--gray-3)] text-[var(--text-xs)] uppercase transition-all duration-[var(--duration-fast)] hover:border-[var(--gray-4)] hover:bg-[var(--gray-8)] disabled:opacity-50 disabled:cursor-not-allowed"
+								title={isGeneratingEmail ? "Generating AI Email..." : "Copy as Email (AI Enhanced)"}
 							>
-								{copiedFormat === "email" ? "✓" : "✉"}
+								{isGeneratingEmail ? "..." : copiedFormat === "email" ? "✓" : "✉"}
 							</button>
 						</div>
 					)}

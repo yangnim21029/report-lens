@@ -3,6 +3,10 @@ import { OpenAI } from "openai";
 import { z } from "zod";
 import { env } from "~/env";
 import { createTRPCRouter, publicProcedure } from "~/server/api/trpc";
+import {
+	extractAnalysisData,
+	formatAsEmailWithAI,
+} from "~/utils/analysisExtractor";
 
 const openai = new OpenAI({
 	apiKey: env.OPENAI_API_KEY,
@@ -47,7 +51,7 @@ export const optimizeRouter = createTRPCRouter({
 
 				// Extract region from URL for language localization
 				const region = input.page.includes("holidaysmart.io")
-					? input.page.match(/\/(hk|tw|sg)\//)?.[1] || "hk"
+					? input.page.match(/\/(hk|tw|sg|my)\//)?.[1] || "hk"
 					: "hk";
 
 				// Define language and locale settings
@@ -75,6 +79,12 @@ export const optimizeRouter = createTRPCRouter({
 						style: "星式用詞",
 						examples: "的、來、不、這樣、對、店舖",
 						tone: "多元、現代、簡潔",
+					},
+					my: {
+						language: "繁體中文（馬來西亞）",
+						style: "馬式用詞",
+						examples: "的、來、不、這樣、對、店舖",
+						tone: "多元、友善、實用",
 					},
 					default: {
 						language: "繁體中文",
@@ -341,22 +351,17 @@ Begin with a concise checklist (3–7 conceptual bullet points) outlining your s
 ## Context
 Expect structured JSON input with the following sample fields:
 - page: ${input.page}
-- currentLocale: language ${currentLocale.language},style ${
-					currentLocale.style
-				} ,examples ${currentLocale.examples}, tone ${currentLocale.tone}
+- currentLocale: language ${currentLocale.language},style ${currentLocale.style
+					} ,examples ${currentLocale.examples}, tone ${currentLocale.tone}
 - pageTitle: ogTitle ${pageTitle}, metaDescription ${metaDescription}
-- bestQuery: "bestQueryClicks ${
-					input.bestQuery || "N/A"
-				}" , bestQueryPosition ${
-					input.bestQueryClicks || 0
-				} clicks - Average rank ${input.bestQueryPosition || "N/A"}
-- prevBestQuery: prevBestClicks${
-					input.prevBestQuery
-						? `"${input.prevBestQuery}", prevBestPosition ${
-								input.prevBestClicks || 0
-							} clicks - Average rank ${input.prevBestPosition || "N/A"}`
+- bestQuery: "bestQueryClicks ${input.bestQuery || "N/A"
+					}" , bestQueryPosition ${input.bestQueryClicks || 0
+					} clicks - Average rank ${input.bestQueryPosition || "N/A"}
+- prevBestQuery: prevBestClicks${input.prevBestQuery
+						? `"${input.prevBestQuery}", prevBestPosition ${input.prevBestClicks || 0
+						} clicks - Average rank ${input.prevBestPosition || "N/A"}`
 						: "N/A"
-				}
+					}
 - Has changed: ${input.prevBestQuery && input.bestQuery !== input.prevBestQuery}
 keywordsList:
 ${keywordsList.join("\n")}
@@ -528,6 +533,45 @@ Treat all fields as strings for output; never trigger errors due to absent or un
 						rawAnalysis: "",
 					},
 					keywordsAnalyzed: 0,
+				};
+			}
+		}),
+
+	generateAIEmail: publicProcedure
+		.input(
+			z.object({
+				analysisText: z.string(),
+				pageData: z.object({
+					page: z.string(),
+					best_query: z.string(),
+				}),
+			}),
+		)
+		.mutation(async ({ input }) => {
+			try {
+				// Extract structured data from analysis
+				const extractedData = extractAnalysisData(
+					input.analysisText,
+					input.pageData,
+				);
+
+				// Generate AI-enhanced email format
+				const emailContent = await formatAsEmailWithAI(
+					extractedData,
+					input.analysisText,
+					openai,
+				);
+
+				return {
+					success: true,
+					emailContent,
+				};
+			} catch (error) {
+				console.error("Failed to generate AI email:", error);
+				return {
+					success: false,
+					error: error instanceof Error ? error.message : "Failed to generate email",
+					emailContent: "",
 				};
 			}
 		}),
