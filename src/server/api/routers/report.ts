@@ -134,7 +134,62 @@ export const reportRouter = createTRPCRouter({
           JSON.stringify(data);
 
         // 4) Build prompt
-        const prompt = `${input.analysisText}\n-----\n\n\n\n因為不能新增新的一篇，幫我找出我應該增加的一段 context vector 內容，覆蓋關鍵字同時，也讓閱讀體驗更好（列出原文的段落類型，以及文章類型，以及該類型前/後/現有內容中，可以置入的一段內容）\n\n\n\n-----\n\n\n\n以下是原文：\n\n${article}`;
+        const prompt = `你是一位專業的 SEO 內容策略師與文案寫手。你的專長是分析使用者意圖與搜尋引擎策略，以創造出精準、簡潔且高影響力的內容。你的任務不僅是撰寫文字，更是要設計一個能夠「劫持」目標搜尋流量、並與現有文章無縫整合的內容解決方案。
+
+Task
+
+${input.analysisText}
+
+（AI 參考上述分析，執行以下任務）
+
+你的核心任務是為一個 [請填寫主題/對象，例如：產品、人物、概念] 撰寫一個全面而簡潔的 [請填寫內容區塊名稱，例如：快速檔案、核心摘要]。這個段落必須能立即且權威地回答使用者最核心的問題 [請填寫核心問題，例如：「[主題]是什麼？」]，並在文章開頭幾句話內就發揮最大的 SEO 效益。最終成品需具備資訊密度高、語氣溫暖在地化、且能無縫嵌入現有文章的特點。
+
+To Do
+策略分析：
+
+剖析使用者請求，識別出最根本的目標。
+
+進行 SEO 分析，理解目標受眾的搜尋意圖與現有成功範例的策略。
+
+確定內容需要「預先回答」的核心問題：[此處代入上述核心問題]。
+
+框架建立：
+
+將 SEO 分析結果轉化為具體的內容標準與檢核清單。
+
+建立一個結構化模板，包含：段落類型、修改位置、建議內容（新增與調整）。
+
+整合所有必要的關鍵資料點：[請列出所有必須包含的關鍵資料點，用逗號分隔]。
+
+內容撰寫：
+
+撰寫初稿，確保文字簡潔、吸引人，並整合所有關鍵資料點。
+
+採用 [請填寫期望的語氣，例如：溫暖在地化、專業權威] 的語氣。
+
+運用「SEO 劫持」策略，將最重要的關鍵字與核心資訊放在段落的最前端。
+
+優化修飾：
+
+根據回饋進行精修，確保內容全面而簡潔。
+
+重新檢視開頭的幾句話，最大化其關聯性與影響力。
+
+確保最終段落能與現有文章無縫整合，提升整體閱讀體驗。
+
+Not to Do
+避免冗長： 不要寫成一篇完整的說明文，專注於一個精簡的段落。
+
+避免模糊： 不要使用模糊或空泛的描述，必須提供具體、有價值的資訊。
+
+避免資訊後置： 不要將最重要的核心資訊埋在段落深處。
+
+避免語氣不符： 不要使用與指示不符的語氣。
+
+避免內容脫節： 產出的段落不能感覺像外來物，必須與文章的其餘部分風格一致。
+
+
+\n-----\n\n\n\n任務：示範2~3優化，因為不能新增新的一篇文章，但我又想包含更多關鍵字，請幫我示範增加 context vector 的段落內容，覆蓋關鍵字同時，也讓閱讀體驗更好（列出原文的段落類型，以及文章類型，以及該類型前/後/現有內容中，可以置入的一段內容）\n\n\n\n-----\n\n\n\n以下是原文：\n\n${article}`;
 
         // 5) Ask OpenAI
         const completion = await openai.chat.completions.create({
@@ -152,7 +207,7 @@ export const reportRouter = createTRPCRouter({
         const content = completion.choices[0]?.message?.content ?? "";
 
         // for dev: show generated suggestion summary (first 200 chars)
-        try { console.log("[report] generated context vector (preview)", content.slice(0, 200)); } catch {}
+        try { console.log("[report] generated context vector (preview)", content.slice(0, 20000)); } catch {}
 
         return { success: true as const, content };
       } catch (error) {
