@@ -5,7 +5,6 @@ import { memo, useCallback, useEffect, useRef, useState, useMemo } from "react";
 import { AnalysisModal } from "~/components/AnalysisModal";
 import { DataCard } from "~/components/DataCard";
 import { RegionFilter } from "~/components/RegionFilter";
-import { api } from "~/trpc/react";
 import {
 	extractAnalysisData,
 	formatAsCSV,
@@ -20,10 +19,29 @@ export default function HomePage() {
 	const [hasOpenModal, setHasOpenModal] = useState(false);
 	const [selectedRegion, setSelectedRegion] = useState<string>("all");
 	const scrollIndicatorRef = useRef<HTMLDivElement>(null);
-	const { data, isLoading, error, refetch } = api.search.getSearchData.useQuery(
-		{ site },
-		{ enabled: false },
-	);
+	const [data, setData] = useState<any[] | null>(null);
+	const [isLoading, setIsLoading] = useState(false);
+	const [error, setError] = useState<Error | null>(null);
+
+	const refetch = useCallback(async () => {
+		setIsLoading(true);
+		setError(null);
+		try {
+			const res = await fetch("/api/search/list", {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ site }),
+			});
+			if (!res.ok) throw new Error(`Search failed: ${res.status}`);
+			const json = await res.json();
+			setData(Array.isArray(json) ? json : []);
+		} catch (e: any) {
+			setError(e instanceof Error ? e : new Error(String(e)));
+			setData([]);
+		} finally {
+			setIsLoading(false);
+		}
+	}, [site]);
 
 	// Stable callback for modal state changes
 	const handleModalChange = useCallback((isOpen: boolean) => {

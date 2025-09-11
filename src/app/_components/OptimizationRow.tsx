@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { api } from "~/trpc/react";
 
 interface OptimizationRowProps {
 	rowData: {
@@ -29,33 +28,46 @@ export function OptimizationRow({ rowData, index }: OptimizationRowProps) {
 		"semantic" | "structure" | "implementation"
 	>("semantic");
 
-	const {
-		mutate: analyzeContent,
-		data,
-		isPending: isLoading,
-		error,
-	} = api.optimize.analyzeContent.useMutation();
+	const [data, setData] = useState<any | null>(null);
+	const [isLoading, setIsLoading] = useState(false);
+	const [error, setError] = useState<Error | null>(null);
 
 	// Trigger analysis when expanded for the first time
 	useEffect(() => {
-		if (isExpanded && !data && !isLoading && !error) {
-			analyzeContent({
-				page: rowData.page,
-				bestQuery: rowData.best_query,
-				bestQueryClicks: rowData.best_query_clicks,
-				bestQueryPosition: rowData.best_query_position,
-				prevBestQuery: rowData.prev_best_query,
-				prevBestPosition: rowData.prev_best_position,
-				prevBestClicks: rowData.prev_best_clicks,
-				rank4: rowData.rank_4,
-				rank5: rowData.rank_5,
-				rank6: rowData.rank_6,
-				rank7: rowData.rank_7,
-				rank8: rowData.rank_8,
-				rank9: rowData.rank_9,
-				rank10: rowData.rank_10,
-			});
-		}
+		const run = async () => {
+			setIsLoading(true);
+			setError(null);
+			try {
+				const res = await fetch("/api/optimize/analyze", {
+					method: "POST",
+					headers: { "content-type": "application/json" },
+					body: JSON.stringify({
+						page: rowData.page,
+						bestQuery: rowData.best_query,
+						bestQueryClicks: rowData.best_query_clicks,
+						bestQueryPosition: rowData.best_query_position,
+						prevBestQuery: rowData.prev_best_query,
+						prevBestPosition: rowData.prev_best_position,
+						prevBestClicks: rowData.prev_best_clicks,
+						rank4: rowData.rank_4,
+						rank5: rowData.rank_5,
+						rank6: rowData.rank_6,
+						rank7: rowData.rank_7,
+						rank8: rowData.rank_8,
+						rank9: rowData.rank_9,
+						rank10: rowData.rank_10,
+					}),
+				});
+				if (!res.ok) throw new Error(`Analyze failed: ${res.status}`);
+				const json = await res.json();
+				setData(json);
+			} catch (e: any) {
+				setError(e instanceof Error ? e : new Error(String(e)));
+			} finally {
+				setIsLoading(false);
+			}
+		};
+		if (isExpanded && !data && !isLoading && !error) run();
 	}, [isExpanded]);
 
 	const getTabContent = () => {
@@ -170,7 +182,7 @@ export function OptimizationRow({ rowData, index }: OptimizationRowProps) {
 											<div className="whitespace-pre-wrap font-sans text-sm text-white/90 leading-relaxed">
 												{getTabContent()
 													.split("\n")
-													.map((line, i) => {
+											.map((line: string, i: number) => {
 														// Format headers
 														if (line.startsWith("###")) {
 															return (

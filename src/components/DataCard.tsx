@@ -2,13 +2,7 @@
 
 import { memo, useCallback, useState } from "react";
 import { AnalysisModal } from "~/components/AnalysisModal";
-import { api } from "~/trpc/react";
-import {
-  extractAnalysisData,
-  formatAsCSV,
-  formatAsEmail,
-  formatAsMarkdown,
-} from "~/utils/extract-format-html";
+import { extractAnalysisData, formatAsEmail, formatAsMarkdown } from "~/utils/extract-format-html";
 
 export const DataCard = memo(function DataCard({
   data,
@@ -17,111 +11,54 @@ export const DataCard = memo(function DataCard({
   const [isExpanded, setIsExpanded] = useState(false);
   const [hasAnalyzed, setHasAnalyzed] = useState(false);
   const [showKeywords, setShowKeywords] = useState(false);
-  const [isSendingToChat, setIsSendingToChat] = useState(false);
   const [copiedFormat, setCopiedFormat] = useState<string | null>(null);
-
-  const {
-    mutate: analyzeContent,
-    data: analysis,
-    isPending: isLoading,
-    error,
-  } = api.optimize.analyzeContent.useMutation();
-
-  const { mutate: sendToChat } = api.chat.sendAnalysisToChat.useMutation({
-    onMutate: () => {
-      setIsSendingToChat(true);
-    },
-    onSuccess: (result) => {
-      if (result.success) {
-        alert("Analysis sent to Google Chat successfully!");
-      } else {
-        alert(`Failed to send to Chat: ${result.error}`);
-      }
-    },
-    onError: (error) => {
-      alert(`Error: ${error.message}`);
-    },
-    onSettled: () => {
-      setIsSendingToChat(false);
-    },
-  });
-
-  const { mutate: generateAIEmail, isPending: isGeneratingEmail } =
-    api.report.generateEmail.useMutation({
-      onSuccess: async (result) => {
-        if (result.success && result.emailContent) {
-          try {
-            await navigator.clipboard.writeText(result.emailContent);
-            setCopiedFormat("email");
-            setTimeout(() => {
-              setCopiedFormat(null);
-            }, 2000);
-          } catch (error) {
-            console.error("Failed to copy to clipboard:", error);
-            alert("Failed to copy to clipboard");
-          }
-        } else {
-          alert("Failed to generate AI email. Using standard format.");
-          // Fallback to standard format
-          handleCopyToClipboard("email", true);
-        }
-      },
-      onError: (error) => {
-        console.error("AI email generation error:", error);
-        alert("Failed to generate AI email. Using standard format.");
-        // Fallback to standard format
-        handleCopyToClipboard("email", true);
-      },
-    });
-
-  const { mutate: generateContextVector, isPending: isGeneratingContext } =
-    api.report.generateContextVector.useMutation({
-      onSuccess: async (result) => {
-        if (result.success && result.content) {
-          try {
-            await navigator.clipboard.writeText(result.content);
-            setCopiedFormat("csv");
-            setTimeout(() => setCopiedFormat(null), 2000);
-          } catch (e) {
-            alert("Failed to copy generated context vector to clipboard");
-          }
-        } else {
-          alert(`Failed to generate context vector: ${result.error || "unknown"}`);
-        }
-      },
-      onError: (err) => {
-        console.error("Context vector generation error:", err);
-        alert("Failed to generate context vector");
-      },
-    });
+  const [analysis, setAnalysis] = useState<any | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<Error | null>(null);
+  const [isGeneratingContext, setIsGeneratingContext] = useState(false);
+  const isGeneratingEmail = false;
 
   const handleAnalyze = useCallback(() => {
-    if (!hasAnalyzed && !isLoading) {
+    const run = async () => {
+      if (hasAnalyzed || isLoading) return;
       setHasAnalyzed(true);
-      analyzeContent({
-        page: data.page,
-        bestQuery: data.best_query,
-        bestQueryClicks: data.best_query_clicks,
-        bestQueryPosition: data.best_query_position,
-        // 前期數據
-        prevBestQuery: data.prev_best_query,
-        prevBestPosition: data.prev_best_position,
-        prevBestClicks: data.prev_best_clicks,
-        // 排名關鍵詞
-        rank4: data.rank_4,
-        rank5: data.rank_5,
-        rank6: data.rank_6,
-        rank7: data.rank_7,
-        rank8: data.rank_8,
-        rank9: data.rank_9,
-        rank10: data.rank_10,
-      });
-    }
+      setIsLoading(true);
+      setError(null);
+      try {
+        const res = await fetch("/api/optimize/analyze", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            page: data.page,
+            bestQuery: data.best_query,
+            bestQueryClicks: data.best_query_clicks,
+            bestQueryPosition: data.best_query_position,
+            prevBestQuery: data.prev_best_query,
+            prevBestPosition: data.prev_best_position,
+            prevBestClicks: data.prev_best_clicks,
+            rank4: data.rank_4,
+            rank5: data.rank_5,
+            rank6: data.rank_6,
+            rank7: data.rank_7,
+            rank8: data.rank_8,
+            rank9: data.rank_9,
+            rank10: data.rank_10,
+          }),
+        });
+        if (!res.ok) throw new Error(`Analyze failed: ${res.status}`);
+        setAnalysis(await res.json());
+      } catch (e: any) {
+        setError(e instanceof Error ? e : new Error(String(e)));
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    run();
     if (!isExpanded) {
       setIsExpanded(true);
       onModalChange?.(true);
     }
-  }, [hasAnalyzed, isLoading, analyzeContent, data, isExpanded, onModalChange]);
+  }, [hasAnalyzed, isLoading, data, isExpanded, onModalChange]);
 
   const handleClose = useCallback(() => {
     setIsExpanded(false);
@@ -129,16 +66,8 @@ export const DataCard = memo(function DataCard({
   }, [onModalChange]);
 
   const handleSendToChat = useCallback(() => {
-    if (analysis && analysis.analysis) {
-      sendToChat({
-        analysis: analysis.analysis,
-        pageData: {
-          page: data.page,
-          best_query: data.best_query || "",
-        },
-      });
-    }
-  }, [analysis, sendToChat, data]);
+    alert("Chat integration removed in REST migration");
+  }, []);
 
   const handleCopyToClipboard = useCallback(
     async (format: "markdown" | "csv" | "email", isStandardFallback = false) => {
@@ -146,13 +75,7 @@ export const DataCard = memo(function DataCard({
 
       // For email format and not a fallback, try AI generation first
       if (format === "email" && !isStandardFallback && !isGeneratingEmail) {
-        generateAIEmail({
-          analysisText: analysis.analysis,
-          pageData: {
-            page: data.page,
-            best_query: data.best_query || "",
-          },
-        });
+        alert("Email generation disabled in REST refactor");
         return;
       }
 
@@ -168,10 +91,27 @@ export const DataCard = memo(function DataCard({
           case "markdown":
             content = formatAsMarkdown(extractedData);
             break;
-          case "csv":
-            // Repurpose CSV to generate context vector using AI with raw analysis + original article
-            generateContextVector({ analysisText: analysis.analysis, pageUrl: data.page });
-            return; // handled asynchronously
+          case "csv": {
+            try {
+              setIsGeneratingContext(true);
+              const res = await fetch("/api/report/context-vector", {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ analysisText: analysis.analysis, pageUrl: data.page }),
+              });
+              const json = await res.json();
+              if (json?.success && json?.content) {
+                await navigator.clipboard.writeText(json.content);
+                setCopiedFormat("csv");
+                setTimeout(() => setCopiedFormat(null), 2000);
+              } else {
+                alert("Failed to generate context vector");
+              }
+            } finally {
+              setIsGeneratingContext(false);
+            }
+            return;
+          }
           case "email":
             content = formatAsEmail(extractedData);
             break;
@@ -189,7 +129,7 @@ export const DataCard = memo(function DataCard({
         alert("Failed to copy to clipboard");
       }
     },
-    [analysis, data, generateAIEmail, isGeneratingEmail],
+    [analysis, data, isGeneratingEmail],
   );
 
   // Get click intensity for visual indicator
