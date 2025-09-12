@@ -7,6 +7,13 @@
 // 請在此處設定您要處理的 Google Sheet 分頁（Tab）名稱
 const TARGET_SHEET_NAME = 'testapi';
 
+// For quick reference in the sheet, annotate
+// which backend route handles each column output.
+// B column (suggestion): /api/report/context-vector
+// C column (analysis):   /api/optimize/analyze
+const PATH_CONTEXT_VECTOR = '/Users/rose/Downloads/01_工作相關/面試求職/PressLogic/RepostLens/repost-lens/src/app/api/report/context-vector/route.ts';
+const PATH_ANALYZE = '/Users/rose/Downloads/01_工作相關/面試求職/PressLogic/RepostLens/repost-lens/src/app/api/optimize/analyze/route.ts';
+
 
 // IMPORTANT: Apps Script cannot call localhost. Set this to your reachable domain.
 // Go to: Extensions → Apps Script → Project Settings → Script properties, and add REPORT_API_BASE
@@ -125,14 +132,18 @@ function processRow_(sheet, row) {
         dlog(`[processRow_] analyze length=${(analysisText || '').length} sample=${trunc(analysisText, 180)}`);
         if (analysisText) {
           analysis = analysisText;
-          sheet.getRange(row, 3).setValue(analysisText); // write back to C
+          const cCell = sheet.getRange(row, 3);
+          cCell.setValue(analysisText); // write back to C
+          try { cCell.setNote('Source: ' + PATH_ANALYZE); } catch (_) {}
         }
       }
     }
     dlog(`[processRow_] call report with analysis length=${(analysis || '').length}`);
     const suggestion = callReportApi_(url, analysis || '');
     dlog(`[processRow_] suggestion length=${(suggestion || '').length} sample=${trunc(suggestion, 180)}`);
-    sheet.getRange(row, 2).setValue(suggestion);
+    const bCell = sheet.getRange(row, 2);
+    bCell.setValue(suggestion);
+    try { bCell.setNote('Source: ' + PATH_CONTEXT_VECTOR); } catch (_) {}
     if (row < sheet.getLastRow()) {
       Utilities.sleep(800); // simple rate-limit, don't sleep on the last row
     }
