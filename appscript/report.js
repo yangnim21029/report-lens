@@ -12,9 +12,9 @@ const TARGET_SHEET_NAME = 'testapi';
 // B column (suggestion): /api/report/context-vector
 // C column (analysis):   /api/optimize/analyze
 // A column (input URL search metadata): /api/search/by-url
-const PATH_CONTEXT_VECTOR = '/Users/rose/Downloads/01_工作相關/面試求職/PressLogic/RepostLens/repost-lens/src/app/api/report/context-vector/route.ts';
-const PATH_ANALYZE = '/Users/rose/Downloads/01_工作相關/面試求職/PressLogic/RepostLens/repost-lens/src/app/api/optimize/analyze/route.ts';
-const PATH_SEARCH_BY_URL = '/Users/rose/Downloads/01_工作相關/面試求職/PressLogic/RepostLens/repost-lens/src/app/api/search/by-url/route.ts';
+const PATH_CONTEXT_VECTOR = '/api/report/context-vector';
+const PATH_ANALYZE = '/api/optimize/analyze';
+const PATH_SEARCH_BY_URL = '/api/search/by-url';
 
 
 // IMPORTANT: Apps Script cannot call localhost. Set this to your reachable domain.
@@ -108,6 +108,14 @@ function runForActiveRow() {
  * @param {number} row The row number to process.
  */
 function processRow_(sheet, row) {
+  const bValue = String(sheet.getRange(row, 2).getValue() || '').trim();
+  const cValue = String(sheet.getRange(row, 3).getValue() || '').trim();
+
+  if (bValue && cValue) {
+    dlog(`[processRow_] skip row=${row} because columns B and C already have content.`);
+    return;
+  }
+
   const rawValue = String(sheet.getRange(row, 1).getValue() || '').trim();
   const url = normalizeUrl_(rawValue);
 
@@ -276,7 +284,33 @@ function normalizeUrl_(s) {
       dlog(`[normalizeUrl_] Added https:// protocol to: ${v}`);
     }
   }
-  return v;
+
+  // To handle both encoded and decoded URL inputs, first decode the URI.
+  // This standardizes the string before re-encoding.
+  let decodedUrl = v;
+  try {
+    // decodeURI will handle strings that are already partially or fully encoded.
+    // If it's a plain string, it will remain unchanged.
+    decodedUrl = decodeURI(v);
+  } catch (e) {
+    // This might happen with malformed URIs (e.g., a stray '%').
+    // We can log it but proceed with the original string.
+    dlog(`[normalizeUrl_] URI decoding failed for "${v}". Proceeding with original value. Error: ${e.message}`);
+  }
+
+  // Now, re-encode the entire URI to ensure it's safe for API calls.
+  // encodeURI correctly handles special characters in paths and query parameters
+  // while preserving the URL structure (e.g., keeps ':', '/', '?').
+  try {
+    const encodedUrl = encodeURI(decodedUrl);
+    if (v !== encodedUrl) {
+      dlog(`[normalizeUrl_] URL was encoded. Original: "${v}", Encoded: "${encodedUrl}"`);
+    }
+    return encodedUrl;
+  } catch (e) {
+    dlog(`[normalizeUrl_] URI encoding failed for "${decodedUrl}". Returning decoded value. Error: ${e.message}`);
+    return decodedUrl; // Fallback to the decoded URL if encoding fails.
+  }
 }
 
 function safeJson_(s) {
