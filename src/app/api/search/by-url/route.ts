@@ -1,5 +1,8 @@
 import { NextResponse } from "next/server";
 
+// Strategy: strict 14-day total window (current 7d, previous 7d).
+// Returns the same field shape as the list route, scoped to a single page.
+
 // Direct implementation of per-URL search stats (no tRPC).
 export async function POST(req: Request) {
   try {
@@ -176,7 +179,7 @@ ORDER BY potential_traffic DESC NULLS LAST
  LIMIT 1;`;
 }
 
-function buildSqlForPageWithWindow(siteToken: string, pageUrl: string, totalDays: number) {
+/* function buildSqlForPageWithWindow(siteToken: string, pageUrl: string, totalDays: number) {
   const site = siteToken;
   const page = escSingleQuotes(pageUrl);
   // Keep current/previous windows at 7 days; expand total window to include older clicks for existence
@@ -282,7 +285,7 @@ LEFT JOIN previous_best pb ON ps.page = pb.page
 LEFT JOIN keyword_pivot kp ON ps.page = kp.page
 ORDER BY potential_traffic DESC NULLS LAST
 LIMIT 1;`;
-}
+} */
 
 function buildUrlVariants(raw: string): string[] {
   // Generate common variants to improve hit rate against upstream data
@@ -435,7 +438,8 @@ LIMIT 1;`;
 async function queryVariants(site: string, variants: string[], totalDays: number): Promise<unknown[] | null> {
   for (let i = 0; i < variants.length; i++) {
     const p = variants[i]!;
-    const sql = totalDays === 14 ? buildSqlForPage(site, p) : buildSqlForPageWithWindow(site, p, totalDays);
+    // Only 14-day window supported now
+    const sql = buildSqlForPage(site, p);
     const response = await fetch(
       "https://unbiased-remarkably-arachnid.ngrok-free.app/api/query",
       {
