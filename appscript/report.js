@@ -11,8 +11,10 @@ const TARGET_SHEET_NAME = 'testapi';
 // which backend route handles each column output.
 // B column (suggestion): /api/report/context-vector
 // C column (analysis):   /api/optimize/analyze
+// A column (input URL search metadata): /api/search/by-url
 const PATH_CONTEXT_VECTOR = '/Users/rose/Downloads/01_工作相關/面試求職/PressLogic/RepostLens/repost-lens/src/app/api/report/context-vector/route.ts';
 const PATH_ANALYZE = '/Users/rose/Downloads/01_工作相關/面試求職/PressLogic/RepostLens/repost-lens/src/app/api/optimize/analyze/route.ts';
+const PATH_SEARCH_BY_URL = '/Users/rose/Downloads/01_工作相關/面試求職/PressLogic/RepostLens/repost-lens/src/app/api/search/by-url/route.ts';
 
 
 // IMPORTANT: Apps Script cannot call localhost. Set this to your reachable domain.
@@ -128,6 +130,7 @@ function processRow_(sheet, row) {
       const searchRow = callSearchByUrl_(site, url);
       dlog(`[processRow_] searchRow found=${!!searchRow}`);
       if (searchRow) {
+        try { sheet.getRange(row, 1).setNote('Source: ' + PATH_SEARCH_BY_URL); } catch (_) {}
         const analysisText = callOptimizeAnalyze_(searchRow);
         dlog(`[processRow_] analyze length=${(analysisText || '').length} sample=${trunc(analysisText, 180)}`);
         if (analysisText) {
