@@ -16,20 +16,15 @@ export async function POST(req: Request) {
 
     // Try primary query; if empty, retry with common URL variants (www/no-www, http/https, trailing slash)
     const variants = buildUrlVariants(page);
-    // Pass 1: default window (14-day total window in SQL)
+    // Only use default window (14-day total window in SQL). No 90-day fallback.
     {
       const result = await queryVariants(site, variants, /*totalDays*/ 14);
-      if (result) return NextResponse.json(result, { status: 200 });
-    }
-    // Pass 2: relaxed window (90-day total window)
-    {
-      const result = await queryVariants(site, variants, /*totalDays*/ 90);
       if (result) return NextResponse.json(result, { status: 200 });
     }
     // If variants failed, try wildcard by article ID (e.g., /article/123217%)
     const likePrefix = toArticleIdPrefix(page);
     if (likePrefix) {
-      const sqlLike = buildSqlForPageLike(site, likePrefix, /*totalDays*/ 90);
+      const sqlLike = buildSqlForPageLike(site, likePrefix, /*totalDays*/ 14);
       const resp2 = await fetch(
         "https://unbiased-remarkably-arachnid.ngrok-free.app/api/query",
         {

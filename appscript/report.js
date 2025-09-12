@@ -147,10 +147,20 @@ function processRow_(sheet, row) {
           cCell.setValue(analysisText); // write back to C
           try { cCell.setNote('Source: ' + PATH_ANALYZE); } catch (_) {}
         }
+      } else {
+        // No search data — do not proceed to analysis or report.
+        dlog('[processRow_] no searchRow; stop without analysis or report');
+        sheet.getRange(row, 2).setValue('SKIP: 無資料（search.by-url 無結果）');
+        return;
       }
     }
+    // Only call report when we have analysis in C
+    if (!analysis) {
+      dlog('[processRow_] no analysis in C; skip report');
+      return;
+    }
     dlog(`[processRow_] call report with analysis length=${(analysis || '').length}`);
-    const suggestion = callReportApi_(url, analysis || '');
+    const suggestion = callReportApi_(url, analysis);
     dlog(`[processRow_] suggestion length=${(suggestion || '').length} sample=${trunc(suggestion, 180)}`);
     const bCell = sheet.getRange(row, 2);
     bCell.setValue(suggestion);
