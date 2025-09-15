@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { OpenAI } from "openai";
 import { convert } from "html-to-text";
 import { env } from "~/env";
+import { fetchKeywordCoverage, buildCoveragePromptParts } from "~/utils/keyword-coverage";
 
 const openai = new OpenAI({ apiKey: env.OPENAI_API_KEY });
 
@@ -59,6 +60,18 @@ export async function POST(req: Request) {
       my: { language: "繁體中文（馬來西亞）", tone: "多元、友善、實用" },
     } as const;
     const currentLocale = (locale as any)[region] || locale.hk;
+
+    // Try to enrich with keyword coverage (SV + optional GSC) for this page
+    let coverageBlock = "";
+    try {
+      const coverage = await fetchKeywordCoverage(page);
+      if (coverage.success) {
+        const { coveredText, uncoveredText } = buildCoveragePromptParts(coverage.covered, coverage.uncovered);
+        coverageBlock = `\n\n# Keyword Coverage Data (for this page)\n- Covered (with GSC when available):\n${coveredText}\n\n- Uncovered (with Search Volume):\n${uncoveredText}\n`;
+      }
+    } catch (_) {
+      // ignore coverage enrichment failures to avoid blocking core analysis
+    }
 
     const prompt = `
 # Role and Objective
@@ -174,7 +187,7 @@ Reason: [succinct justification]
 - Default to plain text. If markdown is required, use ## and ### headers as specified and markdown tables for tabular data.
 # Output Structure
 Follow the exact section, table, and formatting guidance for consistency with automated workflow consumers. Never reveal chain-of-thought reasoning unless explicitly requested.
-`;
+${coverageBlock}`;
 
 
     // Step 4: Call OpenAI
