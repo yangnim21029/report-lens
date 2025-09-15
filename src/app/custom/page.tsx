@@ -20,6 +20,7 @@ interface ProcessedData {
   best_query: string | null;
   best_query_clicks: number | null;
   best_query_position: number | null;
+  best_query_volume?: number | null;
   // 前期數據
   prev_best_query?: string | null;
   prev_best_clicks?: number | null;
@@ -30,6 +31,9 @@ interface ProcessedData {
   total_keywords: number | null;
   keywords_4to10_ratio: string | null;
   potential_traffic: number | null;
+  rank_1: string | null;
+  rank_2: string | null;
+  rank_3: string | null;
   rank_4: string | null;
   rank_5: string | null;
   rank_6: string | null;
@@ -37,6 +41,8 @@ interface ProcessedData {
   rank_8: string | null;
   rank_9: string | null;
   rank_10: string | null;
+  // For TSV: preformatted items for ranks 1-10
+  rank_items_1to10?: string[];
 }
 
 export default function CustomPage() {
@@ -45,16 +51,14 @@ export default function CustomPage() {
   const [fileName, setFileName] = useState<string>("");
   const [selectedRegion, setSelectedRegion] = useState<string>("all");
 
-  const processCSV = useCallback((text: string) => {
-    // Parse CSV - handle complex CSV with commas in quoted fields
+  // Parse a single CSV text into rows
+  const parseCSVToRows = useCallback((text: string): CSVRow[] => {
     const parseCSVLine = (line: string) => {
-      const result = [];
+      const result: string[] = [];
       let current = '';
       let inQuotes = false;
-      
       for (let i = 0; i < line.length; i++) {
         const char = line[i];
-        
         if (char === '"') {
           inQuotes = !inQuotes;
         } else if (char === ',' && !inQuotes) {
@@ -70,14 +74,12 @@ export default function CustomPage() {
 
     const lines = text.split('\n');
     const headers = parseCSVLine(lines[0] || '');
-    
     if (!headers.length) return [];
 
     const rows: CSVRow[] = [];
     for (let i = 1; i < lines.length; i++) {
-      const line = lines[i] ?? "";
+      const line = lines[i] ?? '';
       if (!line.trim()) continue;
-      
       const values = parseCSVLine(line);
       const row: any = {};
       headers.forEach((header, index) => {
@@ -85,21 +87,22 @@ export default function CustomPage() {
       });
       rows.push(row);
     }
+    return rows;
+  }, []);
 
+  // Process combined rows into aggregated data
+  const processRows = useCallback((rows: CSVRow[]): ProcessedData[] => {
     // Group by URL
     const urlGroups = new Map<string, CSVRow[]>();
     rows.forEach(row => {
-      // Accept common URL column aliases
       const url =
         row["Current URL"] ||
         (row as any)["URL"] ||
         (row as any)["Current URL inside"] ||
         "";
       if (url) {
-        if (!urlGroups.has(url)) {
-          urlGroups.set(url, []);
-        }
-        urlGroups.get(url)?.push(row);
+        if (!urlGroups.has(url)) urlGroups.set(url, []);
+        urlGroups.get(url)!.push(row);
       }
     });
 
@@ -192,7 +195,18 @@ export default function CustomPage() {
         return trafficB - trafficA;
       })[0];
       
-      // Find keywords ranking 4-10
+      // Find keywords ranking 1-10 and 4-10
+      const rank1to10 = keywords.filter(k => {
+        const pos = toFloat(
+          pick(k as any, ["Current position", "Position", "Pos"])
+        );
+        return pos >= 1 && pos <= 10;
+      }).sort((a, b) => {
+        const posA = toFloat(pick(a as any, ["Current position", "Position", "Pos"]));
+        const posB = toFloat(pick(b as any, ["Current position", "Position", "Pos"]));
+        return posA - posB;
+      });
+
       const rank4to10 = keywords.filter(k => {
         const pos = toFloat(
           pick(k as any, ["Current position", "Position", "Pos"])
@@ -204,13 +218,15 @@ export default function CustomPage() {
         return posA - posB;
       });
 
-      // Group by rank position
+      // Group by rank position (1-10) and preformat items for TSV
       const rankGroups: { [key: number]: string[] } = {};
-      rank4to10.forEach(k => {
+      const items1to10: string[] = [];
+      const seenNames = new Set<string>();
+      rank1to10.forEach(k => {
         const pos = Math.round(
           toFloat(pick(k as any, ["Current position", "Position", "Pos"]))
         );
-        if (pos >= 4 && pos <= 10) {
+        if (pos >= 1 && pos <= 10) {
           if (!rankGroups[pos]) rankGroups[pos] = [];
           const traffic = pick(k as any, [
             "Current organic traffic",
@@ -218,8 +234,22 @@ export default function CustomPage() {
             "Clicks",
             "Traffic",
           ]) || "0";
+          const volume = pick(k as any, [
+            "Volume",
+            "Search volume",
+            "Search Volume",
+            "MSV",
+            "SV",
+          ]) || "0";
           const keywordText = pick(k as any, ["Keyword", "Query", "keyword"]);
-          rankGroups[pos].push(`${keywordText || "(N/A)"}(${traffic})`);
+          rankGroups[pos].push(`${keywordText || "(N/A)"}(${traffic}|${volume})`);
+
+          const posFloat = toFloat(pick(k as any, ["Current position", "Position", "Pos"])) || 0;
+          const name = (keywordText || "(N/A)").trim();
+          if (!seenNames.has(name)) {
+            seenNames.add(name);
+            items1to10.push(`${name} (SV: ${volume || "0"}, Clicks: ${traffic}, Pos: ${posFloat.toFixed(1)})`);
+          }
         }
       });
 
@@ -269,6 +299,17 @@ export default function CustomPage() {
             toFloat(
               pick(bestKeyword as any, ["Current position", "Position", "Pos"]),
             )) || null,
+        best_query_volume:
+          (bestKeyword &&
+            toInt(
+              pick(bestKeyword as any, [
+                "Volume",
+                "Search volume",
+                "Search Volume",
+                "MSV",
+                "SV",
+              ]),
+            )) || null,
         // 前期數據（若無則為 null）
         prev_best_query:
           (prevBestKeyword &&
@@ -300,6 +341,9 @@ export default function CustomPage() {
             ? `${((rank4to10.length / keywords.length) * 100).toFixed(1)}%`
             : null,
         potential_traffic: potentialTraffic,
+        rank_1: rankGroups[1]?.join(", ") || null,
+        rank_2: rankGroups[2]?.join(", ") || null,
+        rank_3: rankGroups[3]?.join(", ") || null,
         rank_4: rankGroups[4]?.join(", ") || null,
         rank_5: rankGroups[5]?.join(", ") || null,
         rank_6: rankGroups[6]?.join(", ") || null,
@@ -307,31 +351,41 @@ export default function CustomPage() {
         rank_8: rankGroups[8]?.join(", ") || null,
         rank_9: rankGroups[9]?.join(", ") || null,
         rank_10: rankGroups[10]?.join(", ") || null,
+        rank_items_1to10: items1to10,
       });
     });
 
     // Sort by potential_traffic descending
-    return processed.sort((a, b) => 
-      (b.potential_traffic || 0) - (a.potential_traffic || 0)
-    );
+    return processed.sort((a, b) => (b.potential_traffic || 0) - (a.potential_traffic || 0));
   }, []);
 
   const handleFileUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+    const files = Array.from(e.target.files ?? []);
+    if (!files.length) return;
 
     setIsProcessing(true);
-    setFileName(file.name);
+    setFileName(files.length === 1 ? files[0].name : `${files.length} files selected`);
 
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const text = event.target?.result as string;
-      const processed = processCSV(text);
-      setCsvData(processed);
-      setIsProcessing(false);
-    };
-    reader.readAsText(file);
-  }, [processCSV]);
+    // Helper to read a File as text via Promise
+    const readFile = (file: File) => new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result ?? ''));
+      reader.onerror = reject;
+      reader.readAsText(file);
+    });
+
+    Promise.all(files.map(readFile))
+      .then(texts => {
+        // Parse each file into rows and merge
+        const allRows = texts.flatMap(text => parseCSVToRows(text));
+        const processed = processRows(allRows);
+        setCsvData(processed);
+      })
+      .catch(() => {
+        setCsvData([]);
+      })
+      .finally(() => setIsProcessing(false));
+  }, [parseCSVToRows, processRows]);
 
   // Filter data based on selected region
   const filteredData = useMemo(() => {
@@ -343,14 +397,32 @@ export default function CustomPage() {
   // Generate TSV data for copying (based on filtered data)
   const tsvData = useMemo(() => {
     if (filteredData.length === 0) return "";
-    
-    const headers = ["URL", "Potential Traffic", "主要關鍵字"];
-    const rows = filteredData.map(row => [
-      decodeURIComponent(row.page),
-      row.potential_traffic?.toString() || "0",
-      row.best_query || "N/A"
-    ]);
-    
+
+    const headers = ["URL", "Potential Traffic", "Total Traffic", "主要關鍵字", "相關關鍵字(1-10) \"keyword (SV: x, Clicks: y, Pos: z)\""];
+    const rows = filteredData.map(row => {
+      const items = (row as any).rank_items_1to10 as string[] | undefined;
+      const filtered = (items || [])
+        .filter(item => {
+          // Exclude main keyword if present
+          const name = item.includes(" (") ? item.slice(0, item.indexOf(" (")) : item;
+          return !(row.best_query && name === row.best_query);
+        });
+      const relatedLines = filtered.join("\n");
+      const quotedRelated = relatedLines ? `"${relatedLines.replace(/"/g, '""')}"` : "";
+
+      const best = row.best_query
+        ? `${row.best_query} (SV: ${row.best_query_volume ?? 0}, Clicks: ${row.best_query_clicks ?? 0}, Pos: ${(row.best_query_position ?? 0).toFixed(1)})`
+        : "N/A";
+
+      return [
+        decodeURIComponent(row.page),
+        row.potential_traffic?.toString() || "0",
+        row.total_clicks?.toString() || "0",
+        best,
+        quotedRelated,
+      ];
+    });
+
     return [headers, ...rows].map(row => row.join("\t")).join("\n");
   }, [filteredData]);
 
@@ -394,6 +466,7 @@ export default function CustomPage() {
             <input
               type="file"
               accept=".csv"
+              multiple
               onChange={handleFileUpload}
               className="hidden"
               disabled={isProcessing}
@@ -408,14 +481,12 @@ export default function CustomPage() {
                 </div>
               ) : fileName ? (
                 <div>
-                  <p className="text-[var(--ink)] text-[var(--text-xl)] font-bold mb-[var(--space-sm)]">
-                    {fileName}
-                  </p>
+                  <p className="text-[var(--ink)] text-[var(--text-xl)] font-bold mb-[var(--space-sm)]">{fileName}</p>
                   <p className="text-[var(--gray-4)]">
                     {csvData.length} URLs ready for analysis
                   </p>
                   <p className="text-[var(--accent-primary)] text-[var(--text-sm)] mt-[var(--space-md)]">
-                    Click to upload another file
+                    Click to upload more files
                   </p>
                 </div>
               ) : (
@@ -424,7 +495,7 @@ export default function CustomPage() {
                     📁
                   </div>
                   <p className="text-[var(--ink)] text-[var(--text-xl)] font-bold">
-                    Drop CSV file here
+                    Drop CSV files here
                   </p>
                   <p className="text-[var(--gray-4)] text-[var(--text-sm)] mt-[var(--space-sm)]">
                     or click to browse
