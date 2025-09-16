@@ -364,7 +364,7 @@ export default function CustomPage() {
     if (!files.length) return;
 
     setIsProcessing(true);
-    setFileName(files.length === 1 ? files[0].name : `${files.length} files selected`);
+    setFileName(files.length === 1 ? (files[0]?.name ?? "1 file selected") : `${files.length} files selected`);
 
     // Helper to read a File as text via Promise
     const readFile = (file: File) => new Promise<string>((resolve, reject) => {
