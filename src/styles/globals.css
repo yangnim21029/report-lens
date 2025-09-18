@@ -61,6 +61,8 @@
 		--z-overlay: 300;
 		--z-modal: 400;
 		--z-tooltip: 500;
+		/* Hint native UI to render light scheme by default */
+		color-scheme: light;
 	}
 
 	/* Dark mode variables */
@@ -76,6 +78,8 @@
 			--gray-6: #3a3a3a;
 			--gray-7: #2a2a2a;
 			--gray-8: #1a1a1a;
+			/* Hint native UI for dark scheme (form controls, etc.) */
+			color-scheme: dark;
 		}
 	}
 

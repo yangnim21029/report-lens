@@ -17,6 +17,10 @@ export const DataCard = memo(function DataCard({
   const [error, setError] = useState<Error | null>(null);
   const [isGeneratingContext, setIsGeneratingContext] = useState(false);
   const isGeneratingEmail = false;
+  const [svMap, setSvMap] = useState<Record<string, number | null>>({});
+  const [isFetchingSV, setIsFetchingSV] = useState(false);
+  const [svError, setSvError] = useState<string | null>(null);
+  const [showZero, setShowZero] = useState(false);
 
   const handleAnalyze = useCallback(() => {
     const run = async () => {
@@ -207,8 +211,40 @@ export const DataCard = memo(function DataCard({
     return splitEntries(raw).map((p) => parseEntry(label, p));
   };
 
+  const handleFetchSV = useCallback(async () => {
+    if (!data?.page || isFetchingSV) return;
+    setIsFetchingSV(true);
+    setSvError(null);
+    try {
+      const res = await fetch("/api/keyword/coverage", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ url: data.page, limit: 40 }),
+      });
+      const json = await res.json();
+      if (!json?.success) throw new Error(json?.error || "Failed to fetch SV");
+      const map: Record<string, number | null> = {};
+      const fill = (arr: any[]) => {
+        (arr || []).forEach((item) => {
+          const k = String(item?.text || "").trim().toLowerCase();
+          if (!k) return;
+          map[k] = typeof item?.searchVolume === "number" && isFinite(item.searchVolume)
+            ? item.searchVolume
+            : null;
+        });
+      };
+      fill(json.covered);
+      fill(json.uncovered);
+      setSvMap(map);
+    } catch (e: any) {
+      setSvError(e?.message || String(e));
+    } finally {
+      setIsFetchingSV(false);
+    }
+  }, [data?.page, isFetchingSV]);
+
   return (
-    <article className="group relative border border-[var(--gray-7)] bg-white transition-all duration-[var(--duration-normal)] hover:border-[var(--gray-4)]">
+    <article className="group relative border border-[var(--gray-7)] bg-[var(--gray-8)] transition-all duration-[var(--duration-normal)] hover:border-[var(--gray-4)]">
       {/* Click intensity indicator - subtle left border */}
       <div
         className="absolute top-0 bottom-0 left-0 w-[2px] bg-gradient-to-b from-[var(--accent-primary)] to-transparent"
@@ -418,6 +454,21 @@ export const DataCard = memo(function DataCard({
         {/* Keywords - Hidden by default */}
         {showKeywords && (
           <div className="mt-[var(--space-md)] border-[var(--gray-7)] border-t pt-[var(--space-md)]">
+            <div className="mb-[var(--space-sm)] flex items-center justify-between gap-[var(--space-sm)]">
+              <div className="flex items-center gap-[var(--space-xs)]">
+                <button
+                  onClick={handleFetchSV}
+                  disabled={isFetchingSV}
+                  className="border border-[var(--gray-5)] bg-transparent px-[var(--space-sm)] py-1 font-bold text-[var(--gray-3)] text-[var(--text-xs)] uppercase hover:border-[var(--gray-4)] hover:bg-[var(--gray-8)] disabled:opacity-50"
+                  title="Fetch Search Volume"
+                >
+                  {isFetchingSV ? "…" : "Add SV"}
+                </button>
+                {svError && (
+                  <span className="text-red-500 text-[var(--text-xs)]">{svError}</span>
+                )}
+              </div>
+            </div>
             {(() => {
               const rowsTop = [
                 ...parseBucket("1", (data as any)?.rank_1),
@@ -448,6 +499,7 @@ export const DataCard = memo(function DataCard({
                           <tr className="border-b border-[var(--gray-7)] text-[var(--gray-4)]">
                             <th className="px-[var(--space-sm)] py-[var(--space-xs)]">Rank</th>
                             <th className="px-[var(--space-sm)] py-[var(--space-xs)]">Keyword</th>
+                            <th className="px-[var(--space-sm)] py-[var(--space-xs)]">SV</th>
                             <th className="px-[var(--space-sm)] py-[var(--space-xs)]">Clicks</th>
                             <th className="px-[var(--space-sm)] py-[var(--space-xs)]">Impr.</th>
                             <th className="px-[var(--space-sm)] py-[var(--space-xs)]">Pos.</th>
@@ -459,6 +511,13 @@ export const DataCard = memo(function DataCard({
                             <tr key={i} className={i % 2 === 0 ? "bg-[var(--gray-9)]" : undefined}>
                               <td className="px-[var(--space-sm)] py-[var(--space-xs)] text-[var(--gray-4)]">{r.rank}</td>
                               <td className="max-w-[28ch] truncate px-[var(--space-sm)] py-[var(--space-xs)] font-medium text-[var(--ink)]">{r.keyword}</td>
+                              <td className="px-[var(--space-sm)] py-[var(--space-xs)] text-[var(--ink)]">
+                                {(() => {
+                                  const key = r.keyword.trim().toLowerCase();
+                                  const sv = svMap[key];
+                                  return typeof sv === "number" ? sv : "-";
+                                })()}
+                              </td>
                               <td className="px-[var(--space-sm)] py-[var(--space-xs)] text-[var(--ink)]">{r.clicks ?? "-"}</td>
                               <td className="px-[var(--space-sm)] py-[var(--space-xs)] text-[var(--ink)]">{r.impressions ?? "-"}</td>
                               <td className="px-[var(--space-sm)] py-[var(--space-xs)] text-[var(--ink)]">{r.position?.toFixed ? r.position.toFixed(1) : r.position ?? "-"}</td>
@@ -477,7 +536,15 @@ export const DataCard = memo(function DataCard({
                   <Table title="Top Keywords (1–3)" rows={rowsTop} />
                   <Table title="Opportunity Keywords (4–10)" rows={rowsMid} />
                   <Table title=">10 Keywords" rows={rowsGt} />
-                  <Table title="Zero-click Keywords" rows={rowsZero} />
+                  <div className="mt-[var(--space-sm)]">
+                    <button
+                      onClick={() => setShowZero(!showZero)}
+                      className="border border-[var(--gray-5)] bg-transparent px-[var(--space-sm)] py-1 font-bold text-[var(--gray-3)] text-[var(--text-xs)] uppercase hover:border-[var(--gray-4)] hover:bg-[var(--gray-8)]"
+                    >
+                      {showZero ? "Hide Zero-click" : `Show Zero-click (${rowsZero.length})`}
+                    </button>
+                    {showZero && <Table title="Zero-click Keywords" rows={rowsZero} />}
+                  </div>
                 </>
               );
             })()}
