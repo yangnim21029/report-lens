@@ -14,6 +14,43 @@ import {
 
 export default function HomePage() {
 	const [site, setSite] = useState("sc-domain:holidaysmart.io");
+	const [pageUrl, setPageUrl] = useState("");
+	const [startDate, setStartDate] = useState<string>(() => {
+		const end = new Date();
+		const start = new Date(end);
+		start.setDate(end.getDate() - 14);
+		return start.toISOString().split("T")[0]!;
+	});
+	const [periodDays, setPeriodDays] = useState<number>(14);
+	const [sites, setSites] = useState<string[]>([]);
+	const [sitesLoading, setSitesLoading] = useState(false);
+	const [sitesError, setSitesError] = useState<string | null>(null);
+
+	useEffect(() => {
+		let cancelled = false;
+		const load = async () => {
+			setSitesLoading(true);
+			setSitesError(null);
+			try {
+				const res = await fetch("/api/sites", { cache: "no-store" });
+				if (!res.ok) throw new Error(`Sites fetch failed: ${res.status}`);
+				const json = await res.json();
+				let list: string[] = [];
+				if (Array.isArray(json)) {
+					list = json
+						.map((x) => (typeof x === "string" ? x : (x?.site || x?.id || x?.name)))
+						.filter((v: any): v is string => typeof v === "string");
+				}
+				if (!cancelled) setSites(list);
+			} catch (e: any) {
+				if (!cancelled) setSitesError(e?.message || String(e));
+			} finally {
+				if (!cancelled) setSitesLoading(false);
+			}
+		};
+		load();
+		return () => { cancelled = true; };
+	}, []);
 	const [expandedRow, setExpandedRow] = useState<number | null>(null);
 	const [isMounted, setIsMounted] = useState(false);
 	const [hasOpenModal, setHasOpenModal] = useState(false);
@@ -24,13 +61,24 @@ export default function HomePage() {
 	const [error, setError] = useState<Error | null>(null);
 
 	const refetch = useCallback(async () => {
+		// Guard: require either a domain or a page URL
+		if (!pageUrl.trim() && !site.trim()) {
+			setError(new Error("Please enter a domain or a page URL."));
+			setData([]);
+			return;
+		}
 		setIsLoading(true);
 		setError(null);
 		try {
-			const res = await fetch("/api/search/list", {
+			// If pageUrl is provided, query the by-url endpoint for that specific page
+			const endpoint = pageUrl.trim() ? "/api/search/by-url" : "/api/search/list";
+			const payload = pageUrl.trim()
+				? { site, page: pageUrl.trim(), startDate, periodDays }
+				: { site };
+			const res = await fetch(endpoint, {
 				method: "POST",
 				headers: { "content-type": "application/json" },
-				body: JSON.stringify({ site }),
+				body: JSON.stringify(payload),
 			});
 			if (!res.ok) throw new Error(`Search failed: ${res.status}`);
 			const json = await res.json();
@@ -41,7 +89,7 @@ export default function HomePage() {
 		} finally {
 			setIsLoading(false);
 		}
-	}, [site]);
+	}, [site, pageUrl, startDate, periodDays]);
 
 	// Stable callback for modal state changes
 	const handleModalChange = useCallback((isOpen: boolean) => {
@@ -153,15 +201,71 @@ export default function HomePage() {
 
 						{/* Search Interface */}
 						<div className="relative mx-auto max-w-3xl">
-							<div className="flex flex-col gap-[var(--space-md)] sm:flex-row">
+				<div className="flex flex-col gap-[var(--space-md)] sm:flex-row">
+					{!pageUrl.trim() && (
+						<div className="flex-1">
+							{sitesLoading ? (
+								<div className="text-[var(--gray-5)] text-[var(--text-sm)]">Loading sites...</div>
+							) : sites && sites.length > 0 ? (
+								<select
+									value={site}
+									onChange={(e) => setSite(e.target.value)}
+									className="w-full border-[var(--gray-6)] border-b-3 bg-transparent px-[var(--space-lg)] py-[var(--space-md)] font-bold text-[var(--ink)] text-[var(--text-xl)] focus:border-[var(--accent-primary)] focus:outline-none"
+								>
+									{sites.map((s, i) => (
+										<option key={i} value={s} className="text-[var(--ink)]">
+											{s}
+										</option>
+									))}
+								</select>
+							) : (
 								<input
 									type="text"
 									value={site}
 									onChange={(e) => setSite(e.target.value)}
 									onKeyPress={handleKeyPress}
-									className="flex-1 border-[var(--gray-6)] border-b-3 bg-transparent px-[var(--space-lg)] py-[var(--space-md)] font-bold text-[var(--ink)] text-[var(--text-xl)] transition-all duration-[var(--duration-normal)] placeholder:text-[var(--gray-5)] focus:border-[var(--accent-primary)] focus:outline-none"
-									placeholder="Domain to analyze..."
+									className="w-full border-[var(--gray-6)] border-b-3 bg-transparent px-[var(--space-lg)] py-[var(--space-md)] font-bold text-[var(--ink)] text-[var(--text-xl)] placeholder:text-[var(--gray-5)] focus:border-[var(--accent-primary)] focus:outline-none"
+									placeholder="Domain (e.g., sc-domain:example.com)"
 								/>
+							)}
+							{sitesError && (
+								<div className="mt-[var(--space-xs)] text-[var(--text-xs)] text-red-500">{sitesError}</div>
+							)}
+						</div>
+					)}
+								<input
+									type="text"
+									value={pageUrl}
+									onChange={(e) => setPageUrl(e.target.value)}
+									onKeyPress={handleKeyPress}
+									className="flex-1 border-[var(--gray-6)] border-b-3 bg-transparent px-[var(--space-lg)] py-[var(--space-md)] font-bold text-[var(--ink)] text-[var(--text-xl)] transition-all duration-[var(--duration-normal)] placeholder:text-[var(--gray-5)] focus:border-[var(--accent-primary)] focus:outline-none"
+									placeholder="Exact page URL (optional)"
+								/>
+								{pageUrl.trim() && (
+									<div className="flex flex-col gap-[var(--space-md)] sm:flex-row sm:items-end">
+										<div className="flex items-center gap-[var(--space-sm)]">
+											<label className="text-[var(--gray-5)] text-[var(--text-xs)]">Start Date</label>
+											<input
+												type="date"
+												value={startDate}
+												onChange={(e) => setStartDate(e.target.value)}
+												className="border-[var(--gray-6)] border-b-3 bg-transparent px-[var(--space-sm)] py-[var(--space-xs)] font-bold text-[var(--ink)] text-[var(--text-sm)] focus:border-[var(--accent-primary)] focus:outline-none"
+											/>
+										</div>
+										<div className="flex items-center gap-[var(--space-sm)]">
+											<label className="text-[var(--gray-5)] text-[var(--text-xs)]">Days</label>
+											<select
+												value={periodDays}
+												onChange={(e) => setPeriodDays(Number(e.target.value))}
+												className="border-[var(--gray-6)] border-b-3 bg-transparent px-[var(--space-sm)] py-[var(--space-xs)] font-bold text-[var(--ink)] text-[var(--text-sm)] focus:border-[var(--accent-primary)] focus:outline-none"
+											>
+												<option value={7}>7</option>
+												<option value={14}>14</option>
+												<option value={28}>28</option>
+											</select>
+										</div>
+									</div>
+								)}
 								<button
 									onClick={handleSearch}
 									disabled={isLoading}
@@ -197,17 +301,21 @@ export default function HomePage() {
 							<h2 className="mb-[var(--space-sm)] font-black text-[var(--ink)] text-[var(--text-2xl)]">
 								SEMANTIC OPPORTUNITIES
 							</h2>
-							<p className="text-[var(--gray-4)]">
-								{filteredData.length} of {data.length} pages with hijacking potential
-							</p>
+						<p className="text-[var(--gray-4)]">
+							{pageUrl.trim()
+								? `${filteredData.length} result for specific page`
+								: `${filteredData.length} of ${data.length} pages with hijacking potential`}
+						</p>
 						</div>
 
-						{/* Region Filter */}
-						<RegionFilter 
-							data={data}
-							selectedRegion={selectedRegion}
-							onRegionChange={setSelectedRegion}
-						/>
+						{/* Region Filter - hide when querying exact page */}
+						{!pageUrl.trim() && (
+							<RegionFilter 
+								data={data}
+								selectedRegion={selectedRegion}
+								onRegionChange={setSelectedRegion}
+							/>
+						)}
 
 						{/* Data Grid - Cards Layout */}
 						<div className="grid-editorial">

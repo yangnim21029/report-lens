@@ -33,9 +33,10 @@ export const DataCard = memo(function DataCard({
             bestQuery: data.best_query,
             bestQueryClicks: data.best_query_clicks,
             bestQueryPosition: data.best_query_position,
-            prevBestQuery: data.prev_best_query,
-            prevBestPosition: data.prev_best_position,
-            prevBestClicks: data.prev_best_clicks,
+            // API payload kept for compatibility; map to new fields
+            prevBestQuery: data.prev_main_keyword,
+            prevBestPosition: data.prev_keyword_rank,
+            prevBestClicks: data.prev_keyword_traffic,
             rank4: data.rank_4,
             rank5: data.rank_5,
             rank6: data.rank_6,
@@ -135,6 +136,15 @@ export const DataCard = memo(function DataCard({
   // Get click intensity for visual indicator
   const clickIntensity = Math.min(100, (data.best_query_clicks || 0) / 10);
 
+  // Map new field name and parse numeric rank change if available
+  const positionChange: number | null = (() => {
+    const raw = (data as any)?.keyword_rank_change;
+    if (raw === null || raw === undefined) return null;
+    if (typeof raw === "number") return isFinite(raw) ? raw : null;
+    const n = parseFloat(String(raw).replace(/[^-\d.]/g, ""));
+    return isFinite(n) ? n : null;
+  })();
+
   // Format URL for display
   const formatUrl = (url: string) => {
     try {
@@ -159,6 +169,42 @@ export const DataCard = memo(function DataCard({
       const last = parts[parts.length - 1] || "homepage";
       return last.length > 25 ? last.substring(0, 22) + "..." : last;
     }
+  };
+
+  // Helpers to parse keyword strings into table rows
+  type KwRow = {
+    rank: string;
+    keyword: string;
+    clicks: number | null;
+    impressions: number | null;
+    position: number | null;
+    ctr: number | null; // percent
+  };
+
+  const splitEntries = (raw?: string | null): string[] => {
+    if (!raw || typeof raw !== "string") return [];
+    const parts = raw.split(/\),\s+/);
+    return parts.map((p, i) => (i < parts.length - 1 && !p.endsWith(")")) ? (p + ")") : p);
+  };
+
+  const parseEntry = (label: string, part: string): KwRow => {
+    const m = part.match(/^(.+?)\(\s*click\s*:\s*([\d.]+)\s*,\s*impression\s*:\s*([\d.]+)\s*,\s*position\s*:\s*([\d.]+)\s*,\s*ctr\s*:\s*([\d.]+)%\s*\)$/i);
+    if (m) {
+      return {
+        rank: label,
+        keyword: (m[1] ?? "").trim(),
+        clicks: Number.isFinite(Number(m[2])) ? Number(m[2]) : null,
+        impressions: Number.isFinite(Number(m[3])) ? Number(m[3]) : null,
+        position: Number.isFinite(Number(m[4])) ? Number(m[4]) : null,
+        ctr: Number.isFinite(Number(m[5])) ? Number(m[5]) : null,
+      };
+    }
+    const name = part.includes("(") ? part.slice(0, part.indexOf("(")).trim() : part.trim();
+    return { rank: label, keyword: name, clicks: null, impressions: null, position: null, ctr: null };
+  };
+
+  const parseBucket = (label: string, raw?: string | null): KwRow[] => {
+    return splitEntries(raw).map((p) => parseEntry(label, p));
   };
 
   return (
@@ -202,25 +248,24 @@ export const DataCard = memo(function DataCard({
                 <span className="font-bold text-[var(--gray-3)] text-[var(--text-sm)]">
                   {data.best_query_position.toFixed(1)}
                 </span>
-                {data.position_change !== null &&
-                  data.position_change !== undefined && (
-                    <span
-                      className={`ml-1 font-bold text-[var(--text-xs)] ${
-                        data.position_change > 0
+                {positionChange !== null && positionChange !== undefined && (
+                  <span
+                    className={`ml-1 font-bold text-[var(--text-xs)] ${
+                        positionChange > 0
                           ? "text-green-500"
-                          : data.position_change < 0
+                          : positionChange < 0
                             ? "text-red-500"
                             : "text-[var(--gray-5)]"
-                      }`}
-                    >
-                      {data.position_change > 0
+                    }`}
+                  >
+                      {positionChange > 0
                         ? "↑"
-                        : data.position_change < 0
+                        : positionChange < 0
                           ? "↓"
                           : "-"}
-                      {Math.abs(data.position_change).toFixed(1)}
-                    </span>
-                  )}
+                      {Math.abs(positionChange).toFixed(1)}
+                  </span>
+                )}
               </div>
             )}
           </div>
@@ -239,26 +284,89 @@ export const DataCard = memo(function DataCard({
         </a>
         {/* Stats bar */}
         <div className="flex items-center gap-[var(--space-md)] text-[var(--gray-5)] text-[var(--text-xs)]">
-          {data.keywords_4to10_count !== null &&
+          {data.keywords_1to10_count !== null &&
             data.total_keywords !== null && (
-              <span title="Keywords ranking 4-10 / Total keywords">
-                🎯 {data.keywords_4to10_count}/{data.total_keywords} words
+              <span title="Keywords ranking 1-10 / Total keywords">
+                🎯 {data.keywords_1to10_count}/{data.total_keywords} words
               </span>
             )}
-          {data.keywords_4to10_ratio !== null && (
-            <span title="Percentage of keywords ranking 4-10">
-              📈 {data.keywords_4to10_ratio}
+          {data.keywords_1to10_ratio !== null && (
+            <span title="Percentage of keywords ranking 1-10">
+              📈 {data.keywords_1to10_ratio}
             </span>
           )}
-          {data.prev_best_query &&
-            data.prev_best_query !== data.best_query && (
-              <span
-                title="Previous best query"
-                className="text-[var(--gray-6)] italic"
-              >
-                🔄 {data.prev_best_query}
-              </span>
-            )}
+          {data.keywords_gt10_count !== null && data.keywords_gt10_count !== undefined && (
+            <span title=">10 ranked keywords" className="text-[var(--gray-6)]">
+              {'>'}10: {data.keywords_gt10_count}
+            </span>
+          )}
+          {(() => {
+            // Use ALL clicked keywords (ranks 1–10 and >10), weighted by impressions
+            const rows = [
+              (data as any)?.rank_1,
+              (data as any)?.rank_2,
+              (data as any)?.rank_3,
+              (data as any)?.rank_4,
+              (data as any)?.rank_5,
+              (data as any)?.rank_6,
+              (data as any)?.rank_7,
+              (data as any)?.rank_8,
+              (data as any)?.rank_9,
+              (data as any)?.rank_10,
+              (data as any)?.rank_gt10,
+            ].flatMap((s: any) => parseBucket("", s));
+
+            const clicks = rows.map(r => r.clicks).filter((v): v is number => v !== null && isFinite(v));
+            const imps = rows.map(r => r.impressions).filter((v): v is number => v !== null && isFinite(v));
+            const totalClicks = clicks.reduce((a, b) => a + b, 0);
+            const totalImpr = imps.reduce((a, b) => a + b, 0);
+            if (!isFinite(totalClicks) || !isFinite(totalImpr) || totalImpr <= 0) return null;
+
+            const wCtr = (totalClicks / totalImpr) * 100;
+            const wCtrInt = Math.round(wCtr);
+            const score = Math.min(100, Math.round((wCtr / 30) * 100));
+
+            const size = 56; // px
+            const stroke = 6;
+            const r = (size - stroke) / 2;
+            const c = 2 * Math.PI * r;
+            const offset = c * (1 - score / 100);
+
+            return (
+              <div className="flex items-center gap-[var(--space-xs)]" title={`Weighted CTR (clicked): ${wCtrInt}% • SEO Score (CTR30): ${score}`}>
+                <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="shrink-0">
+                  <circle cx={size/2} cy={size/2} r={r} stroke="var(--gray-7)" strokeWidth={stroke} fill="none" />
+                  <circle
+                    cx={size/2}
+                    cy={size/2}
+                    r={r}
+                    stroke="rgb(34 197 94)"
+                    strokeWidth={stroke}
+                    fill="none"
+                    strokeLinecap="round"
+                    strokeDasharray={`${c} ${c}`}
+                    strokeDashoffset={offset}
+                    transform={`rotate(-90 ${size/2} ${size/2})`}
+                  />
+                  <text x="50%" y="50%" dominantBaseline="central" textAnchor="middle" fontWeight={900} fontSize={16} fill="rgb(34 197 94)">
+                    {score}
+                  </text>
+                </svg>
+                <div className="flex flex-col leading-tight">
+                  <span className="font-bold text-[var(--ink)] text-[var(--text-xs)]">SEO Score</span>
+                  <span className="text-[var(--gray-6)] text-[10px]">CTR30 = 100 • wCTR {wCtrInt}%</span>
+                </div>
+              </div>
+            );
+          })()}
+          {data.prev_main_keyword && data.prev_main_keyword !== data.best_query && (
+            <span
+              title="Previous best query"
+              className="text-[var(--gray-6)] italic"
+            >
+              {data.prev_main_keyword}
+            </span>
+          )}
         </div>
         </div>
 
@@ -310,26 +418,69 @@ export const DataCard = memo(function DataCard({
         {/* Keywords - Hidden by default */}
         {showKeywords && (
           <div className="mt-[var(--space-md)] border-[var(--gray-7)] border-t pt-[var(--space-md)]">
-            <div className="flex flex-wrap gap-[var(--space-xs)]">
-            {[
-              data.rank_4,
-              data.rank_5,
-              data.rank_6,
-              data.rank_7,
-              data.rank_8,
-              data.rank_9,
-              data.rank_10,
-            ]
-              .filter(Boolean)
-              .map((keyword, i) => (
-                <span
-                  key={i}
-                  className="rounded-sm bg-[var(--gray-8)] px-[var(--space-sm)] py-1 text-[var(--gray-4)] text-[var(--text-xs)]"
-                >
-                  {keyword}
-                </span>
-              ))}
-            </div>
+            {(() => {
+              const rowsTop = [
+                ...parseBucket("1", (data as any)?.rank_1),
+                ...parseBucket("2", (data as any)?.rank_2),
+                ...parseBucket("3", (data as any)?.rank_3),
+              ];
+              const rowsMid = [
+                ...parseBucket("4", (data as any)?.rank_4),
+                ...parseBucket("5", (data as any)?.rank_5),
+                ...parseBucket("6", (data as any)?.rank_6),
+                ...parseBucket("7", (data as any)?.rank_7),
+                ...parseBucket("8", (data as any)?.rank_8),
+                ...parseBucket("9", (data as any)?.rank_9),
+                ...parseBucket("10", (data as any)?.rank_10),
+              ];
+              const rowsGt = parseBucket(">10", (data as any)?.rank_gt10);
+              const rowsZero = parseBucket("", (data as any)?.zero_click_keywords);
+
+              const Table = ({ title, rows }: { title: string; rows: KwRow[] }) => (
+                <div className="mb-[var(--space-md)]">
+                  <div className="mb-[var(--space-xs)] text-left font-bold text-[var(--ink)] text-[var(--text-sm)]">{title}</div>
+                  {rows.length === 0 ? (
+                    <div className="text-[var(--gray-5)] text-[var(--text-xs)]">No data</div>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left text-[var(--text-xs)]">
+                        <thead>
+                          <tr className="border-b border-[var(--gray-7)] text-[var(--gray-4)]">
+                            <th className="px-[var(--space-sm)] py-[var(--space-xs)]">Rank</th>
+                            <th className="px-[var(--space-sm)] py-[var(--space-xs)]">Keyword</th>
+                            <th className="px-[var(--space-sm)] py-[var(--space-xs)]">Clicks</th>
+                            <th className="px-[var(--space-sm)] py-[var(--space-xs)]">Impr.</th>
+                            <th className="px-[var(--space-sm)] py-[var(--space-xs)]">Pos.</th>
+                            <th className="px-[var(--space-sm)] py-[var(--space-xs)]">CTR</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {rows.map((r, i) => (
+                            <tr key={i} className={i % 2 === 0 ? "bg-[var(--gray-9)]" : undefined}>
+                              <td className="px-[var(--space-sm)] py-[var(--space-xs)] text-[var(--gray-4)]">{r.rank}</td>
+                              <td className="max-w-[28ch] truncate px-[var(--space-sm)] py-[var(--space-xs)] font-medium text-[var(--ink)]">{r.keyword}</td>
+                              <td className="px-[var(--space-sm)] py-[var(--space-xs)] text-[var(--ink)]">{r.clicks ?? "-"}</td>
+                              <td className="px-[var(--space-sm)] py-[var(--space-xs)] text-[var(--ink)]">{r.impressions ?? "-"}</td>
+                              <td className="px-[var(--space-sm)] py-[var(--space-xs)] text-[var(--ink)]">{r.position?.toFixed ? r.position.toFixed(1) : r.position ?? "-"}</td>
+                              <td className="px-[var(--space-sm)] py-[var(--space-xs)] text-[var(--ink)]">{r.ctr !== null && r.ctr !== undefined ? `${r.ctr.toFixed ? r.ctr.toFixed(2) : r.ctr}%` : "-"}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              );
+
+              return (
+                <>
+                  <Table title="Top Keywords (1–3)" rows={rowsTop} />
+                  <Table title="Opportunity Keywords (4–10)" rows={rowsMid} />
+                  <Table title=">10 Keywords" rows={rowsGt} />
+                  <Table title="Zero-click Keywords" rows={rowsZero} />
+                </>
+              );
+            })()}
           </div>
         )}
       </div>
