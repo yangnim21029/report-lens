@@ -21,6 +21,7 @@ export const DataCard = memo(function DataCard({
   const [isFetchingSV, setIsFetchingSV] = useState(false);
   const [svError, setSvError] = useState<string | null>(null);
   const [showZero, setShowZero] = useState(false);
+  const [compareMode, setCompareMode] = useState(true);
 
   const handleAnalyze = useCallback(() => {
     const run = async () => {
@@ -41,13 +42,13 @@ export const DataCard = memo(function DataCard({
             prevBestQuery: data.prev_main_keyword,
             prevBestPosition: data.prev_keyword_rank,
             prevBestClicks: data.prev_keyword_traffic,
-            rank4: data.rank_4,
-            rank5: data.rank_5,
-            rank6: data.rank_6,
-            rank7: data.rank_7,
-            rank8: data.rank_8,
-            rank9: data.rank_9,
-            rank10: data.rank_10,
+            rank4: (data as any)?.current_rank_4,
+            rank5: (data as any)?.current_rank_5,
+            rank6: (data as any)?.current_rank_6,
+            rank7: (data as any)?.current_rank_7,
+            rank8: (data as any)?.current_rank_8,
+            rank9: (data as any)?.current_rank_9,
+            rank10: (data as any)?.current_rank_10,
           }),
         });
         if (!res.ok) throw new Error(`Analyze failed: ${res.status}`);
@@ -192,7 +193,8 @@ export const DataCard = memo(function DataCard({
   };
 
   const parseEntry = (label: string, part: string): KwRow => {
-    const m = part.match(/^(.+?)\(\s*click\s*:\s*([\d.]+)\s*,\s*impression\s*:\s*([\d.]+)\s*,\s*position\s*:\s*([\d.]+)\s*,\s*ctr\s*:\s*([\d.]+)%\s*\)$/i);
+    // Pattern with CTR present
+    let m = part.match(/^(.+?)\(\s*click\s*:\s*([\d.]+)\s*,\s*impression\s*:\s*([\d.]+)\s*,\s*position\s*:\s*([\d.]+)\s*,\s*ctr\s*:\s*([\d.]+)%\s*\)$/i);
     if (m) {
       return {
         rank: label,
@@ -203,12 +205,38 @@ export const DataCard = memo(function DataCard({
         ctr: Number.isFinite(Number(m[5])) ? Number(m[5]) : null,
       };
     }
+    // Pattern without CTR
+    m = part.match(/^(.+?)\(\s*click\s*:\s*([\d.]+)\s*,\s*impression\s*:\s*([\d.]+)\s*,\s*position\s*:\s*([\d.]+)\s*\)$/i);
+    if (m) {
+      return {
+        rank: label,
+        keyword: (m[1] ?? "").trim(),
+        clicks: Number.isFinite(Number(m[2])) ? Number(m[2]) : null,
+        impressions: Number.isFinite(Number(m[3])) ? Number(m[3]) : null,
+        position: Number.isFinite(Number(m[4])) ? Number(m[4]) : null,
+        ctr: null,
+      };
+    }
     const name = part.includes("(") ? part.slice(0, part.indexOf("(")).trim() : part.trim();
     return { rank: label, keyword: name, clicks: null, impressions: null, position: null, ctr: null };
   };
 
   const parseBucket = (label: string, raw?: string | null): KwRow[] => {
     return splitEntries(raw).map((p) => parseEntry(label, p));
+  };
+
+  // Normalize keywords to improve matching between API texts and table rows
+  const normalizeKeyword = (raw: string): string => {
+    try {
+      return String(raw)
+        .normalize("NFKC")
+        .toLowerCase()
+        .replace(/[\u3000\s]+/g, "") // remove half/full-width spaces
+        .replace(/[\u200b-\u200d\ufeff]/g, "") // zero-width chars
+        .replace(/['"`’“”‘、/\\|,:;._+~!@#$%^&*()（）\[\]【】{}<>?\-]+/g, "");
+    } catch {
+      return String(raw).trim().toLowerCase();
+    }
   };
 
   const handleFetchSV = useCallback(async () => {
@@ -219,14 +247,16 @@ export const DataCard = memo(function DataCard({
       const res = await fetch("/api/keyword/coverage", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ url: data.page, limit: 40 }),
+        // Rely on backend default capping/sorting; no need to send limit
+        body: JSON.stringify({ url: data.page }),
       });
       const json = await res.json();
       if (!json?.success) throw new Error(json?.error || "Failed to fetch SV");
       const map: Record<string, number | null> = {};
       const fill = (arr: any[]) => {
         (arr || []).forEach((item) => {
-          const k = String(item?.text || "").trim().toLowerCase();
+          const original = String(item?.text || "");
+          const k = normalizeKeyword(original);
           if (!k) return;
           map[k] = typeof item?.searchVolume === "number" && isFinite(item.searchVolume)
             ? item.searchVolume
@@ -235,6 +265,15 @@ export const DataCard = memo(function DataCard({
       };
       fill(json.covered);
       fill(json.uncovered);
+      // Debug summary for mapping keys
+      try {
+        const keys = Object.keys(map);
+        console.debug("[DataCard] SV map built", {
+          keysCount: keys.length,
+          sample: keys.slice(0, 8),
+          debugId: json?.debugId,
+        });
+      } catch {}
       setSvMap(map);
     } catch (e: any) {
       setSvError(e?.message || String(e));
@@ -339,17 +378,17 @@ export const DataCard = memo(function DataCard({
           {(() => {
             // Use ALL clicked keywords (ranks 1–10 and >10), weighted by impressions
             const rows = [
-              (data as any)?.rank_1,
-              (data as any)?.rank_2,
-              (data as any)?.rank_3,
-              (data as any)?.rank_4,
-              (data as any)?.rank_5,
-              (data as any)?.rank_6,
-              (data as any)?.rank_7,
-              (data as any)?.rank_8,
-              (data as any)?.rank_9,
-              (data as any)?.rank_10,
-              (data as any)?.rank_gt10,
+              (data as any)?.current_rank_1,
+              (data as any)?.current_rank_2,
+              (data as any)?.current_rank_3,
+              (data as any)?.current_rank_4,
+              (data as any)?.current_rank_5,
+              (data as any)?.current_rank_6,
+              (data as any)?.current_rank_7,
+              (data as any)?.current_rank_8,
+              (data as any)?.current_rank_9,
+              (data as any)?.current_rank_10,
+              (data as any)?.current_rank_gt10,
             ].flatMap((s: any) => parseBucket("", s));
 
             const clicks = rows.map(r => r.clicks).filter((v): v is number => v !== null && isFinite(v));
@@ -462,7 +501,7 @@ export const DataCard = memo(function DataCard({
                   className="border border-[var(--gray-5)] bg-transparent px-[var(--space-sm)] py-1 font-bold text-[var(--gray-3)] text-[var(--text-xs)] uppercase hover:border-[var(--gray-4)] hover:bg-[var(--gray-8)] disabled:opacity-50"
                   title="Fetch Search Volume"
                 >
-                  {isFetchingSV ? "…" : "Add SV"}
+                  {isFetchingSV ? "…" : "補搜尋量"}
                 </button>
                 {svError && (
                   <span className="text-red-500 text-[var(--text-xs)]">{svError}</span>
@@ -470,21 +509,45 @@ export const DataCard = memo(function DataCard({
               </div>
             </div>
             {(() => {
+              // Build previous stats map: keyword -> {clicks, impressions, position}
+              const prevStatMap = (() => {
+                const map: Record<string, { clicks: number | null; impressions: number | null; position: number | null }> = {};
+                const collect = (raw?: string | null) => {
+                  parseBucket("", raw).forEach((row) => {
+                    const key = normalizeKeyword(row.keyword);
+                    if (!key) return;
+                    map[key] = { clicks: row.clicks, impressions: row.impressions, position: row.position };
+                  });
+                };
+                collect((data as any)?.prev_rank_1);
+                collect((data as any)?.prev_rank_2);
+                collect((data as any)?.prev_rank_3);
+                collect((data as any)?.prev_rank_4);
+                collect((data as any)?.prev_rank_5);
+                collect((data as any)?.prev_rank_6);
+                collect((data as any)?.prev_rank_7);
+                collect((data as any)?.prev_rank_8);
+                collect((data as any)?.prev_rank_9);
+                collect((data as any)?.prev_rank_10);
+                collect((data as any)?.prev_rank_gt10);
+                return map;
+              })();
+
               const rowsTop = [
-                ...parseBucket("1", (data as any)?.rank_1),
-                ...parseBucket("2", (data as any)?.rank_2),
-                ...parseBucket("3", (data as any)?.rank_3),
+                ...parseBucket("1", (data as any)?.current_rank_1),
+                ...parseBucket("2", (data as any)?.current_rank_2),
+                ...parseBucket("3", (data as any)?.current_rank_3),
               ];
               const rowsMid = [
-                ...parseBucket("4", (data as any)?.rank_4),
-                ...parseBucket("5", (data as any)?.rank_5),
-                ...parseBucket("6", (data as any)?.rank_6),
-                ...parseBucket("7", (data as any)?.rank_7),
-                ...parseBucket("8", (data as any)?.rank_8),
-                ...parseBucket("9", (data as any)?.rank_9),
-                ...parseBucket("10", (data as any)?.rank_10),
+                ...parseBucket("4", (data as any)?.current_rank_4),
+                ...parseBucket("5", (data as any)?.current_rank_5),
+                ...parseBucket("6", (data as any)?.current_rank_6),
+                ...parseBucket("7", (data as any)?.current_rank_7),
+                ...parseBucket("8", (data as any)?.current_rank_8),
+                ...parseBucket("9", (data as any)?.current_rank_9),
+                ...parseBucket("10", (data as any)?.current_rank_10),
               ];
-              const rowsGt = parseBucket(">10", (data as any)?.rank_gt10);
+              const rowsGt = parseBucket(">10", (data as any)?.current_rank_gt10);
               const rowsZero = parseBucket("", (data as any)?.zero_click_keywords);
 
               const Table = ({ title, rows }: { title: string; rows: KwRow[] }) => (
@@ -497,31 +560,102 @@ export const DataCard = memo(function DataCard({
                       <table className="w-full text-left text-[var(--text-xs)]">
                         <thead>
                           <tr className="border-b border-[var(--gray-7)] text-[var(--gray-4)]">
-                            <th className="px-[var(--space-sm)] py-[var(--space-xs)]">Rank</th>
+                            <th className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap">Rank</th>
                             <th className="px-[var(--space-sm)] py-[var(--space-xs)]">Keyword</th>
                             <th className="px-[var(--space-sm)] py-[var(--space-xs)]">SV</th>
-                            <th className="px-[var(--space-sm)] py-[var(--space-xs)]">Clicks</th>
-                            <th className="px-[var(--space-sm)] py-[var(--space-xs)]">Impr.</th>
-                            <th className="px-[var(--space-sm)] py-[var(--space-xs)]">Pos.</th>
-                            <th className="px-[var(--space-sm)] py-[var(--space-xs)]">CTR</th>
+                            <th className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap">Clicks</th>
+                            <th className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap">Impr.</th>
+                            <th className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap">Pos.</th>
+                            <th className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap">CTR</th>
                           </tr>
                         </thead>
                         <tbody>
                           {rows.map((r, i) => (
                             <tr key={i} className={i % 2 === 0 ? "bg-[var(--gray-9)]" : undefined}>
-                              <td className="px-[var(--space-sm)] py-[var(--space-xs)] text-[var(--gray-4)]">{r.rank}</td>
+                              <td className="px-[var(--space-sm)] py-[var(--space-xs)] text-[var(--gray-4)] whitespace-nowrap">{r.rank}</td>
                               <td className="max-w-[28ch] truncate px-[var(--space-sm)] py-[var(--space-xs)] font-medium text-[var(--ink)]">{r.keyword}</td>
                               <td className="px-[var(--space-sm)] py-[var(--space-xs)] text-[var(--ink)]">
                                 {(() => {
-                                  const key = r.keyword.trim().toLowerCase();
+                                  const key = normalizeKeyword(r.keyword);
                                   const sv = svMap[key];
+                                  if (typeof sv !== "number") {
+                                    // Light debug to help diagnose mismatches
+                                    try { console.debug("[DataCard] SV miss", { raw: r.keyword, key }); } catch {}
+                                  }
                                   return typeof sv === "number" ? sv : "-";
                                 })()}
                               </td>
-                              <td className="px-[var(--space-sm)] py-[var(--space-xs)] text-[var(--ink)]">{r.clicks ?? "-"}</td>
-                              <td className="px-[var(--space-sm)] py-[var(--space-xs)] text-[var(--ink)]">{r.impressions ?? "-"}</td>
-                              <td className="px-[var(--space-sm)] py-[var(--space-xs)] text-[var(--ink)]">{r.position?.toFixed ? r.position.toFixed(1) : r.position ?? "-"}</td>
-                              <td className="px-[var(--space-sm)] py-[var(--space-xs)] text-[var(--ink)]">{r.ctr !== null && r.ctr !== undefined ? `${r.ctr.toFixed ? r.ctr.toFixed(2) : r.ctr}%` : "-"}</td>
+                              <td className="px-[var(--space-sm)] py-[var(--space-xs)] text-[var(--ink)] whitespace-nowrap">
+                                {(() => {
+                                  const key = normalizeKeyword(r.keyword);
+                                  const prev = prevStatMap[key]?.clicks ?? null;
+                                  const now = r.clicks ?? null;
+                                  if (!compareMode) return now ?? "-";
+                                  const cls = prev === null || now === null
+                                    ? "text-[var(--gray-4)]"
+                                    : now > prev
+                                      ? "text-green-500"
+                                      : now < prev
+                                        ? "text-red-500"
+                                        : "text-[var(--gray-4)]";
+                                  return <span className={`font-semibold ${cls}`}>{prev ?? "-"} → {now ?? "-"}</span>;
+                                })()}
+                              </td>
+                              <td className="px-[var(--space-sm)] py-[var(--space-xs)] text-[var(--ink)] whitespace-nowrap">
+                                {(() => {
+                                  const key = normalizeKeyword(r.keyword);
+                                  const prev = prevStatMap[key]?.impressions ?? null;
+                                  const now = r.impressions ?? null;
+                                  if (!compareMode) return now ?? "-";
+                                  const cls = prev === null || now === null
+                                    ? "text-[var(--gray-4)]"
+                                    : now > prev
+                                      ? "text-green-500"
+                                      : now < prev
+                                        ? "text-red-500"
+                                        : "text-[var(--gray-4)]";
+                                  return <span className={`font-semibold ${cls}`}>{prev ?? "-"} → {now ?? "-"}</span>;
+                                })()}
+                              </td>
+                              <td className="px-[var(--space-sm)] py-[var(--space-xs)] text-[var(--ink)] whitespace-nowrap">
+                                {(() => {
+                                  const key = normalizeKeyword(r.keyword);
+                                  const prev = prevStatMap[key]?.position ?? null;
+                                  const now = r.position ?? null;
+                                  if (!compareMode) return now?.toFixed ? now.toFixed(1) : now ?? "-";
+                                  const fmt = (n: number | null) => (n === null ? "-" : (n.toFixed ? n.toFixed(1) : String(n)));
+                                  const cls = prev === null || now === null
+                                    ? "text-[var(--gray-4)]"
+                                    : now < prev
+                                      ? "text-green-500"
+                                      : now > prev
+                                        ? "text-red-500"
+                                        : "text-[var(--gray-4)]";
+                                  return <span className={`font-semibold ${cls}`}>{fmt(prev)} → {fmt(now)}</span>;
+                                })()}
+                              </td>
+                              <td className="px-[var(--space-sm)] py-[var(--space-xs)] text-[var(--ink)] whitespace-nowrap">
+                                {(() => {
+                                  const key = normalizeKeyword(r.keyword);
+                                  const p = prevStatMap[key];
+                                  const prevCtr = p && typeof p.clicks === "number" && typeof p.impressions === "number" && p.impressions > 0
+                                    ? (p.clicks / p.impressions) * 100
+                                    : null;
+                                  const nowCtr = typeof r.clicks === "number" && typeof r.impressions === "number" && r.impressions > 0
+                                    ? (r.clicks / r.impressions) * 100
+                                    : null;
+                                  if (!compareMode) return nowCtr === null ? "-" : `${nowCtr.toFixed(2)}%`;
+                                  const cls = prevCtr === null || nowCtr === null
+                                    ? "text-[var(--gray-4)]"
+                                    : nowCtr > prevCtr
+                                      ? "text-green-500"
+                                      : nowCtr < prevCtr
+                                        ? "text-red-500"
+                                        : "text-[var(--gray-4)]";
+                                  const fmt = (n: number | null) => (n === null ? "-" : `${n.toFixed(2)}%`);
+                                  return <span className={`font-semibold ${cls}`}>{fmt(prevCtr)} → {fmt(nowCtr)}</span>;
+                                })()}
+                              </td>
                             </tr>
                           ))}
                         </tbody>
@@ -542,6 +676,13 @@ export const DataCard = memo(function DataCard({
                       className="border border-[var(--gray-5)] bg-transparent px-[var(--space-sm)] py-1 font-bold text-[var(--gray-3)] text-[var(--text-xs)] uppercase hover:border-[var(--gray-4)] hover:bg-[var(--gray-8)]"
                     >
                       {showZero ? "Hide Zero-click" : `Show Zero-click (${rowsZero.length})`}
+                    </button>
+                    <button
+                      onClick={() => setCompareMode(!compareMode)}
+                      className="ml-[var(--space-sm)] border border-[var(--gray-5)] bg-transparent px-[var(--space-sm)] py-1 font-bold text-[var(--gray-3)] text-[var(--text-xs)] uppercase hover:border-[var(--gray-4)] hover:bg-[var(--gray-8)]"
+                      title="切換比較模式"
+                    >
+                      {compareMode ? "比較模式：開" : "比較模式：關"}
                     </button>
                     {showZero && <Table title="Zero-click Keywords" rows={rowsZero} />}
                   </div>
