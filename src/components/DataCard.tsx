@@ -590,6 +590,23 @@ export const DataCard = memo(function DataCard({
                     </div>
                   );
                 })()}
+                {(() => {
+                  const t = explorerInsights.overall?.siteTypes as Record<string, number> | undefined;
+                  if (!t) return null;
+                  const entries = Object.entries(t).filter(([, v]) => typeof v === "number" && v > 0);
+                  if (entries.length === 0) return null;
+                  const label = (k: string) => k;
+                  return (
+                    <div className="mt-[var(--space-xs)] flex flex-wrap items-center gap-[4px]">
+                      <span className="mr-[4px] text-[var(--gray-5)]">Types:</span>
+                      {entries.map(([k, v], i) => (
+                        <span key={i} className="rounded-sm bg-[var(--gray-8)] px-[6px] py-[2px] text-[var(--ink)]">
+                          {label(k)} {v}
+                        </span>
+                      ))}
+                    </div>
+                  );
+                })()}
               </div>
             )}
             {(() => {
