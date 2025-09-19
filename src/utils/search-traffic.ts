@@ -80,6 +80,7 @@ export interface EnrichedResultItem {
   siteType: SiteType;
   domainTraffic: number | null; // Ahrefs domain traffic (ST)
   pageTraffic: number | null;   // Ahrefs page traffic (ST)
+  pageKeywords: number | null;  // Ahrefs page keywords (KW)
   score: number; // composite score for ranking candidates
 }
 
@@ -234,6 +235,7 @@ export async function fetchSearchTrafficInsights(
       const backdomains = parseHumanNumber((r as any)?.ahrefs_page?.RD ?? r.backdomains ?? null);
       const domainTraffic = parseHumanNumber((r as any)?.ahrefs_domain?.ST ?? null);
       const pageTraffic = parseHumanNumber((r as any)?.ahrefs_page?.ST ?? null);
+      const pageKeywords = parseHumanNumber((r as any)?.ahrefs_page?.KW ?? null);
       const topOffset = toNumberOrNull(r.topOffset);
       const siteType = classifySiteType(url || domain);
       const base: EnrichedResultItem = {
@@ -246,6 +248,7 @@ export async function fetchSearchTrafficInsights(
         backdomains,
         domainTraffic,
         pageTraffic,
+        pageKeywords,
         siteType,
         score: 0,
       };
@@ -342,6 +345,7 @@ export async function fetchContentExplorerForQueries(queries: string[]): Promise
       const backdomains = parseHumanNumber((r as any)?.ahrefs_page?.RD ?? r.backdomains ?? null);
       const domainTraffic = parseHumanNumber((r as any)?.ahrefs_domain?.ST ?? null);
       const pageTraffic = parseHumanNumber((r as any)?.ahrefs_page?.ST ?? null);
+      const pageKeywords = parseHumanNumber((r as any)?.ahrefs_page?.KW ?? null);
       const topOffset = toNumberOrNull(r.topOffset);
       const siteType = classifySiteType(url || domain);
       const base: EnrichedResultItem = {
@@ -356,6 +360,7 @@ export async function fetchContentExplorerForQueries(queries: string[]): Promise
         pageTraffic,
         siteType,
         score: 0,
+        pageKeywords,
       };
       return { ...base, score: buildScore(base, maxOffset || 1) };
     });

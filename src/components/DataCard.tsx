@@ -594,9 +594,8 @@ export const DataCard = memo(function DataCard({
                         <th className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap">Type</th>
                         <th className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap">DR</th>
                         <th className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap">Traffic</th>
-                        <th className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap">RD</th>
+                        <th className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap">KW</th>
                         <th className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap">BL</th>
-                        <th className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap">Offset</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -633,7 +632,7 @@ export const DataCard = memo(function DataCard({
                         const [top, rest] = [rows.slice(0, 5), rows.slice(5)];
                         const showAll = explorerShowAll;
                         if (!rows.length) return (
-                          <tr><td colSpan={8} className="px-[var(--space-sm)] py-[var(--space-xs)] text-[var(--gray-5)]">No results</td></tr>
+                          <tr><td colSpan={6} className="px-[var(--space-sm)] py-[var(--space-xs)] text-[var(--gray-5)]">No results</td></tr>
                         );
                         const renderRow = (r: any, idx: number) => (
                           <tr key={idx} className={idx % 2 === 0 ? "bg-[var(--gray-10)]" : undefined}>
@@ -646,9 +645,8 @@ export const DataCard = memo(function DataCard({
                             <td className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap">{r.siteType || "-"}</td>
                             <td className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap">{typeof r.domainAuthority === "number" ? r.domainAuthority : "-"}</td>
                             <td className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap">{typeof r.pageTraffic === 'number' ? r.pageTraffic.toLocaleString?.() : '-'}</td>
-                            <td className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap">{typeof r.backdomains === "number" ? r.backdomains.toLocaleString?.() : (typeof r.backdomains === 'number' ? r.backdomains : (r.backdomains || '-'))}</td>
+                            <td className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap">{typeof r.pageKeywords === 'number' ? r.pageKeywords.toLocaleString?.() : '-'}</td>
                             <td className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap">{typeof r.backlinks === "number" ? r.backlinks.toLocaleString?.() : (typeof r.backlinks === 'number' ? r.backlinks : (r.backlinks || '-'))}</td>
-                            <td className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap">{typeof r.topOffset === "number" ? Math.round(r.topOffset) : "-"}</td>
                           </tr>
                         );
                         return (
