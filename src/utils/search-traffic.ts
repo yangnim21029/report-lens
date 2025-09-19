@@ -151,9 +151,18 @@ function avg(nums: (number | null | undefined)[]): number | null {
 
 async function fetchUpstream(query: string): Promise<UpstreamSearchResponse | null> {
   const url = ENDPOINT + encodeURIComponent(query);
-  const res = await fetch(url, { cache: "no-store" });
+  const res = await fetch(url, {
+    cache: "no-store",
+    headers: { "ngrok-skip-browser-warning": "true" },
+  });
   if (!res.ok) return null;
-  const json = (await res.json()) as UpstreamSearchResponse | any;
+  let json: any = null;
+  try {
+    const text = await res.text();
+    json = JSON.parse(text);
+  } catch {
+    return null;
+  }
   if (!json || json.success !== true) return null;
   // Prefer merged_results when available; otherwise use results
   const results = Array.isArray(json.merged_results) && json.merged_results.length > 0

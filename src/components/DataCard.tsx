@@ -3,7 +3,7 @@
 import { memo, useCallback, useState } from "react";
 import { AnalysisModal } from "~/components/AnalysisModal";
 import { extractAnalysisData, formatAsEmail, formatAsMarkdown } from "~/utils/extract-format-html";
-import { fetchContentExplorerForQueries } from "~/utils/search-traffic";
+// Use server API route to avoid CORS / ngrok HTML warning
 
 export const DataCard = memo(function DataCard({
   data,
@@ -270,9 +270,15 @@ export const DataCard = memo(function DataCard({
         .slice(0, 3)
         .map((x) => x.keyword);
       if (topByImpr.length === 0) throw new Error("沒有可用的關鍵字（缺少 Impressions）");
-      const res = await fetchContentExplorerForQueries(topByImpr);
-      setExplorerInsights(res);
-      try { console.debug("[DataCard] content explorer", res); } catch {}
+      const resp = await fetch("/api/content-explorer", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ queries: topByImpr }),
+      });
+      const resJson = await resp.json();
+      if (!resp.ok || !resJson?.success) throw new Error(resJson?.error || `Explorer failed: ${resp.status}`);
+      setExplorerInsights(resJson);
+      try { console.debug("[DataCard] content explorer", resJson); } catch {}
     } catch (e: any) {
       setExplorerError(e?.message || String(e));
     } finally {
