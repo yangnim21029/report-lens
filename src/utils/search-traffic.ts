@@ -155,6 +155,22 @@ function classifySiteType(urlOrDomain?: string | null): SiteType {
   return "other";
 }
 
+function normalizeKey(s: string): string {
+  return String(s || "").trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function normalizeUrl(u: string): string {
+  try {
+    const url = new URL(u);
+    url.hash = "";
+    // strip common tracking params
+    ["utm_source","utm_medium","utm_campaign","utm_term","utm_content","gclid"].forEach((p) => url.searchParams.delete(p));
+    return url.toString().toLowerCase();
+  } catch {
+    return normalizeKey(u);
+  }
+}
+
 function buildScore(item: EnrichedResultItem, maxOffset: number): number {
   const da = item.domainAuthority ?? 0;
   const bl = item.backlinks ?? 0;
@@ -213,8 +229,9 @@ export async function fetchSearchTrafficInsights(
       const fallbackHost = extractHostname(r.domain);
       const domain = urlHost || fallbackHost;
       const da = toNumberOrNull((r as any)?.ahrefs_domain?.DR) ?? toNumberOrNull(r.domainAuthority);
-      const backlinks = parseHumanNumber((r as any)?.ahrefs_domain?.RP ?? r.backlinks ?? null);
-      const backdomains = parseHumanNumber((r as any)?.ahrefs_domain?.RD ?? r.backdomains ?? null);
+      // Page-level metrics preferred
+      const backlinks = parseHumanNumber((r as any)?.ahrefs_page?.RP ?? r.backlinks ?? null);
+      const backdomains = parseHumanNumber((r as any)?.ahrefs_page?.RD ?? r.backdomains ?? null);
       const domainTraffic = parseHumanNumber((r as any)?.ahrefs_domain?.ST ?? null);
       const pageTraffic = parseHumanNumber((r as any)?.ahrefs_page?.ST ?? null);
       const topOffset = toNumberOrNull(r.topOffset);
@@ -236,9 +253,26 @@ export async function fetchSearchTrafficInsights(
     });
 
     // Sort by score desc and take top 5 for reporting
-    const pages = enriched
+    // Deduplicate pages within a query by URL (preferred) or title+domain
+    const pageMap = new Map<string, EnrichedResultItem>();
+    for (const it of enriched) {
+      const key = it.url ? `u:${normalizeUrl(it.url)}` : `t:${normalizeKey(it.title)}|d:${normalizeKey(it.domain)}`;
+      const prev = pageMap.get(key);
+      if (!prev) { pageMap.set(key, it); continue; }
+      const prevTraffic = (prev.pageTraffic ?? -1);
+      const currTraffic = (it.pageTraffic ?? -1);
+      if (currTraffic > prevTraffic || (currTraffic === prevTraffic && (it.score > prev.score))) {
+        pageMap.set(key, it);
+      }
+    }
+    const pages = Array.from(pageMap.values())
       .filter((x) => x.url || x.domain)
-      .sort((a, b) => b.score - a.score);
+      .sort((a, b) => {
+        const at = a.pageTraffic ?? -1;
+        const bt = b.pageTraffic ?? -1;
+        if (bt !== at) return bt - at;
+        return (b.score - a.score);
+      });
     const topPages = pages.slice(0, 5);
 
     const avgDomainAuthority = avg(enriched.map((x) => x.domainAuthority));
@@ -303,8 +337,9 @@ export async function fetchContentExplorerForQueries(queries: string[]): Promise
       const fallbackHost = extractHostname(r.domain);
       const domain = urlHost || fallbackHost;
       const da = toNumberOrNull(r.ahrefs_domain?.DR) ?? toNumberOrNull(r.domainAuthority);
-      const backlinks = parseHumanNumber(r.ahrefs_domain?.RP ?? r.backlinks ?? null);
-      const backdomains = parseHumanNumber(r.ahrefs_domain?.RD ?? r.backdomains ?? null);
+      // Page-level metrics preferred
+      const backlinks = parseHumanNumber((r as any)?.ahrefs_page?.RP ?? r.backlinks ?? null);
+      const backdomains = parseHumanNumber((r as any)?.ahrefs_page?.RD ?? r.backdomains ?? null);
       const domainTraffic = parseHumanNumber((r as any)?.ahrefs_domain?.ST ?? null);
       const pageTraffic = parseHumanNumber((r as any)?.ahrefs_page?.ST ?? null);
       const topOffset = toNumberOrNull(r.topOffset);
@@ -334,7 +369,8 @@ export async function fetchContentExplorerForQueries(queries: string[]): Promise
     const siteTypes: Record<SiteType, number> = { gov: 0, edu: 0, news: 0, blog: 0, retail: 0, forum: 0, media: 0, other: 0 };
     for (const x of enriched) siteTypes[x.siteType] = (siteTypes[x.siteType] || 0) + 1;
 
-    const paa = Array.isArray((data as any)?.paa_list)
+    // Deduplicate PAA by normalized question text
+    const paaRaw: Array<{ question: string; source_url?: string; answer?: string; topOffset?: number | null }> = Array.isArray((data as any)?.paa_list)
       ? (data as any).paa_list.map((x: any) => ({
           question: String(x?.question || "").trim(),
           source_url: x?.source_url ? String(x.source_url) : undefined,
@@ -342,6 +378,14 @@ export async function fetchContentExplorerForQueries(queries: string[]): Promise
           topOffset: toNumberOrNull(x?.topOffset),
         }))
       : [];
+    const normPaa = new Map<string, { question: string; source_url?: string; answer?: string; topOffset?: number | null }>();
+    const normalizeQuestion = (q: string) => normalizeKey(q.replace(/^\[[^\]]+\]\s*/, ""));
+    for (const p of paaRaw) {
+      if (!p.question) continue;
+      const qk = normalizeQuestion(p.question);
+      if (!normPaa.has(qk)) normPaa.set(qk, p);
+    }
+    const paa = Array.from(normPaa.values());
 
     return {
       query: q,

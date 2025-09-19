@@ -592,7 +592,7 @@ export const DataCard = memo(function DataCard({
                         <th className="px-[var(--space-sm)] py-[var(--space-xs)]">Title</th>
                         <th className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap">Domain</th>
                         <th className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap">Type</th>
-                        <th className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap">DA</th>
+                        <th className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap">DR</th>
                         <th className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap">Traffic</th>
                         <th className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap">RD</th>
                         <th className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap">BL</th>
@@ -602,12 +602,29 @@ export const DataCard = memo(function DataCard({
                     <tbody>
                       {(() => {
                         const insights = explorerInsights.insights || [];
-                        // merge all pages across queries
-                        const rows: any[] = insights.flatMap((i: any) => (i.pages || i.topPages || []).map((p: any) => ({ ...p })));
-                        // sort by page traffic desc, then domain traffic, then score
+                        // merge and de-duplicate by url or title+domain across queries
+                        const map = new Map<string, any>();
+                        const keyFor = (x: any) => x?.url ? `u:${String(x.url).toLowerCase()}` : `t:${String(x.title || '').toLowerCase().trim()}|d:${String(x.domain || '').toLowerCase().trim()}`;
+                        const pickBetter = (a: any, b: any) => {
+                          const at = (typeof a.pageTraffic === 'number' ? a.pageTraffic : -1);
+                          const bt = (typeof b.pageTraffic === 'number' ? b.pageTraffic : -1);
+                          if (bt > at) return b; if (at > bt) return a;
+                          const as = typeof a.score === 'number' ? a.score : 0;
+                          const bs = typeof b.score === 'number' ? b.score : 0;
+                          return bs > as ? b : a;
+                        };
+                        insights.forEach((i: any) => {
+                          (i.pages || i.topPages || []).forEach((p: any) => {
+                            const k = keyFor(p);
+                            const prev = map.get(k);
+                            map.set(k, prev ? pickBetter(prev, p) : p);
+                          });
+                        });
+                        const rows: any[] = Array.from(map.values());
+                        // sort strictly by pageTraffic desc, fallback to score
                         rows.sort((a, b) => {
-                          const at = (typeof a.pageTraffic === 'number' ? a.pageTraffic : 0) || (typeof a.domainTraffic === 'number' ? a.domainTraffic : 0) || 0;
-                          const bt = (typeof b.pageTraffic === 'number' ? b.pageTraffic : 0) || (typeof b.domainTraffic === 'number' ? b.domainTraffic : 0) || 0;
+                          const at = (typeof a.pageTraffic === 'number' ? a.pageTraffic : -1);
+                          const bt = (typeof b.pageTraffic === 'number' ? b.pageTraffic : -1);
                           if (bt !== at) return bt - at;
                           const as = typeof a.score === 'number' ? a.score : 0;
                           const bs = typeof b.score === 'number' ? b.score : 0;
@@ -628,11 +645,7 @@ export const DataCard = memo(function DataCard({
                             <td className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap">{r.domain || "-"}</td>
                             <td className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap">{r.siteType || "-"}</td>
                             <td className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap">{typeof r.domainAuthority === "number" ? r.domainAuthority : "-"}</td>
-                            <td className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap">{
-                              typeof r.pageTraffic === 'number' ? r.pageTraffic.toLocaleString?.() : (
-                                typeof r.domainTraffic === 'number' ? r.domainTraffic.toLocaleString?.() : '-'
-                              )
-                            }</td>
+                            <td className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap">{typeof r.pageTraffic === 'number' ? r.pageTraffic.toLocaleString?.() : '-'}</td>
                             <td className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap">{typeof r.backdomains === "number" ? r.backdomains.toLocaleString?.() : (typeof r.backdomains === 'number' ? r.backdomains : (r.backdomains || '-'))}</td>
                             <td className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap">{typeof r.backlinks === "number" ? r.backlinks.toLocaleString?.() : (typeof r.backlinks === 'number' ? r.backlinks : (r.backlinks || '-'))}</td>
                             <td className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap">{typeof r.topOffset === "number" ? Math.round(r.topOffset) : "-"}</td>
@@ -659,13 +672,17 @@ export const DataCard = memo(function DataCard({
                 {/* PAA List */}
                 {(() => {
                   const insights = explorerInsights.insights || [];
-                  const allPaa: Array<{ query: string; question: string; source_url?: string }> = [];
+                  const allPaaMap = new Map<string, { query: string; question: string; source_url?: string }>();
+                  const normalizeQuestion = (q: string) => q.replace(/^\[[^\]]+\]\s*/, '').trim().toLowerCase();
                   insights.forEach((i: any) => {
                     (i.paa || []).forEach((p: any) => {
-                      const q = String(p?.question || '').trim();
-                      if (q) allPaa.push({ query: i.query, question: q, source_url: p?.source_url });
+                      const qRaw = String(p?.question || '').trim();
+                      if (!qRaw) return;
+                      const key = normalizeQuestion(qRaw);
+                      if (!allPaaMap.has(key)) allPaaMap.set(key, { query: i.query, question: qRaw, source_url: p?.source_url });
                     });
                   });
+                  const allPaa = Array.from(allPaaMap.values());
                   if (allPaa.length === 0) return null;
                   return (
                     <div className="mt-[var(--space-sm)]">
