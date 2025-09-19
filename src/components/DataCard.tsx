@@ -26,6 +26,7 @@ export const DataCard = memo(function DataCard({
   const [isFetchingExplorer, setIsFetchingExplorer] = useState(false);
   const [explorerError, setExplorerError] = useState<string | null>(null);
   const [explorerInsights, setExplorerInsights] = useState<any | null>(null);
+  const [explorerShowAll, setExplorerShowAll] = useState(false);
 
   const handleAnalyze = useCallback(() => {
     const run = async () => {
@@ -588,28 +589,37 @@ export const DataCard = memo(function DataCard({
                   <table className="w-full text-left">
                     <thead>
                       <tr className="border-b border-[var(--gray-7)] text-[var(--gray-4)]">
-                        <th className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap">Query</th>
                         <th className="px-[var(--space-sm)] py-[var(--space-xs)]">Title</th>
                         <th className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap">Domain</th>
                         <th className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap">Type</th>
                         <th className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap">DA</th>
-                        <th className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap">Backlinks</th>
+                        <th className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap">Traffic</th>
+                        <th className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap">RD</th>
+                        <th className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap">BL</th>
                         <th className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap">Offset</th>
                       </tr>
                     </thead>
                     <tbody>
                       {(() => {
                         const insights = explorerInsights.insights || [];
-                        const rows: any[] = insights.flatMap((i: any) => {
-                          const top = (i.topPages || []).slice(0, 3);
-                          return top.map((p: any) => ({ query: i.query, ...p }));
+                        // merge all pages across queries
+                        const rows: any[] = insights.flatMap((i: any) => (i.pages || i.topPages || []).map((p: any) => ({ ...p })));
+                        // sort by page traffic desc, then domain traffic, then score
+                        rows.sort((a, b) => {
+                          const at = (typeof a.pageTraffic === 'number' ? a.pageTraffic : 0) || (typeof a.domainTraffic === 'number' ? a.domainTraffic : 0) || 0;
+                          const bt = (typeof b.pageTraffic === 'number' ? b.pageTraffic : 0) || (typeof b.domainTraffic === 'number' ? b.domainTraffic : 0) || 0;
+                          if (bt !== at) return bt - at;
+                          const as = typeof a.score === 'number' ? a.score : 0;
+                          const bs = typeof b.score === 'number' ? b.score : 0;
+                          return bs - as;
                         });
+                        const [top, rest] = [rows.slice(0, 5), rows.slice(5)];
+                        const showAll = explorerShowAll;
                         if (!rows.length) return (
-                          <tr><td colSpan={7} className="px-[var(--space-sm)] py-[var(--space-xs)] text-[var(--gray-5)]">No results</td></tr>
+                          <tr><td colSpan={8} className="px-[var(--space-sm)] py-[var(--space-xs)] text-[var(--gray-5)]">No results</td></tr>
                         );
-                        return rows.map((r: any, idx: number) => (
+                        const renderRow = (r: any, idx: number) => (
                           <tr key={idx} className={idx % 2 === 0 ? "bg-[var(--gray-10)]" : undefined}>
-                            <td className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap">{r.query}</td>
                             <td className="px-[var(--space-sm)] py-[var(--space-xs)] max-w-[40ch] truncate">
                               {r.url ? (
                                 <a href={r.url} target="_blank" rel="noopener noreferrer" className="underline hover:text-[var(--accent-primary)]">{r.title}</a>
@@ -618,14 +628,61 @@ export const DataCard = memo(function DataCard({
                             <td className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap">{r.domain || "-"}</td>
                             <td className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap">{r.siteType || "-"}</td>
                             <td className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap">{typeof r.domainAuthority === "number" ? r.domainAuthority : "-"}</td>
-                            <td className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap">{typeof r.backlinks === "number" ? r.backlinks : "-"}</td>
-                            <td className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap">{typeof r.topOffset === "number" ? r.topOffset : "-"}</td>
+                            <td className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap">{
+                              typeof r.pageTraffic === 'number' ? r.pageTraffic.toLocaleString?.() : (
+                                typeof r.domainTraffic === 'number' ? r.domainTraffic.toLocaleString?.() : '-'
+                              )
+                            }</td>
+                            <td className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap">{typeof r.backdomains === "number" ? r.backdomains.toLocaleString?.() : (typeof r.backdomains === 'number' ? r.backdomains : (r.backdomains || '-'))}</td>
+                            <td className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap">{typeof r.backlinks === "number" ? r.backlinks.toLocaleString?.() : (typeof r.backlinks === 'number' ? r.backlinks : (r.backlinks || '-'))}</td>
+                            <td className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap">{typeof r.topOffset === "number" ? Math.round(r.topOffset) : "-"}</td>
                           </tr>
-                        ));
+                        );
+                        return (
+                          <>
+                            {top.map((r, i) => renderRow(r, i))}
+                            {showAll && rest.map((r, i) => renderRow(r, i + top.length))}
+                          </>
+                        );
                       })()}
                     </tbody>
                   </table>
                 </div>
+                <div className="mt-[var(--space-xs)]">
+                  <button
+                    onClick={() => setExplorerShowAll((v) => !v)}
+                    className="border border-[var(--gray-5)] bg-transparent px-[var(--space-sm)] py-1 font-bold text-[var(--gray-3)] text-[var(--text-xs)] uppercase hover:border-[var(--gray-4)] hover:bg-[var(--gray-8)]"
+                  >
+                    {explorerShowAll ? 'Show Top 5' : 'Show All'}
+                  </button>
+                </div>
+                {/* PAA List */}
+                {(() => {
+                  const insights = explorerInsights.insights || [];
+                  const allPaa: Array<{ query: string; question: string; source_url?: string }> = [];
+                  insights.forEach((i: any) => {
+                    (i.paa || []).forEach((p: any) => {
+                      const q = String(p?.question || '').trim();
+                      if (q) allPaa.push({ query: i.query, question: q, source_url: p?.source_url });
+                    });
+                  });
+                  if (allPaa.length === 0) return null;
+                  return (
+                    <div className="mt-[var(--space-sm)]">
+                      <div className="mb-[var(--space-xs)] font-bold text-[var(--ink)]">People Also Ask</div>
+                      <ul className="list-disc pl-5">
+                        {allPaa.slice(0, 10).map((p, idx) => (
+                          <li key={idx} className="mb-[2px]">
+                            <span className="text-[var(--gray-5)] mr-1">[{p.query}]</span>
+                            {p.source_url ? (
+                              <a href={p.source_url} target="_blank" rel="noopener noreferrer" className="underline hover:text-[var(--accent-primary)]">{p.question}</a>
+                            ) : p.question}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  );
+                })()}
                 {(() => {
                   const t = explorerInsights.overall?.siteTypes as Record<string, number> | undefined;
                   if (!t) return null;

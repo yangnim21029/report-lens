@@ -31,6 +31,22 @@ export interface UpstreamResultItem {
   domainAuthority?: string; // e.g. "91" or "N/A" or "20+"
   backdomains?: string; // e.g. "146.5K" or "N/A"
   backlinks?: string; // e.g. "3.7M" or "N/A"
+  ahrefs_domain?: {
+    DR?: string; // domain rating
+    AR?: string; // ahrefs rank
+    RP?: string; // backlinks
+    RD?: string; // referring domains
+    KW?: string; // keywords
+    ST?: string; // traffic
+  };
+  ahrefs_page?: {
+    UR?: string; // url rating
+    RP?: string;
+    RD?: string;
+    KW?: string;
+    ST?: string;
+    Words?: string;
+  };
 }
 
 export interface UpstreamSearchResponse {
@@ -62,6 +78,8 @@ export interface EnrichedResultItem {
   backlinks: number | null;
   backdomains: number | null;
   siteType: SiteType;
+  domainTraffic: number | null; // Ahrefs domain traffic (ST)
+  pageTraffic: number | null;   // Ahrefs page traffic (ST)
   score: number; // composite score for ranking candidates
 }
 
@@ -70,8 +88,10 @@ export interface QueryInsight {
   count: number;
   avgDomainAuthority: number | null; // average of numeric DA values
   siteTypes: Record<SiteType, number>; // frequency distribution
-  topPages: EnrichedResultItem[]; // sorted by score desc
+  topPages: EnrichedResultItem[]; // top slice by score desc
+  pages: EnrichedResultItem[];    // all pages, sorted by score desc
   bestPage: EnrichedResultItem | null;
+  paa?: Array<{ question: string; source_url?: string; answer?: string; topOffset?: number | null }>;
 }
 
 export interface SearchTrafficInsights {
@@ -189,10 +209,14 @@ export async function fetchSearchTrafficInsights(
     const maxOffset = Math.max(...items.map((r) => toNumberOrNull(r.topOffset) ?? 0), 0);
     const enriched: EnrichedResultItem[] = items.map((r) => {
       const url = r.url && r.url !== "N/A" ? String(r.url) : "";
-      const domain = extractHostname(r.domain || url);
-      const da = toNumberOrNull(r.domainAuthority);
-      const backlinks = parseHumanNumber(r.backlinks ?? null);
-      const backdomains = parseHumanNumber(r.backdomains ?? null);
+      const urlHost = extractHostname(url);
+      const fallbackHost = extractHostname(r.domain);
+      const domain = urlHost || fallbackHost;
+      const da = toNumberOrNull((r as any)?.ahrefs_domain?.DR) ?? toNumberOrNull(r.domainAuthority);
+      const backlinks = parseHumanNumber((r as any)?.ahrefs_domain?.RP ?? r.backlinks ?? null);
+      const backdomains = parseHumanNumber((r as any)?.ahrefs_domain?.RD ?? r.backdomains ?? null);
+      const domainTraffic = parseHumanNumber((r as any)?.ahrefs_domain?.ST ?? null);
+      const pageTraffic = parseHumanNumber((r as any)?.ahrefs_page?.ST ?? null);
       const topOffset = toNumberOrNull(r.topOffset);
       const siteType = classifySiteType(url || domain);
       const base: EnrichedResultItem = {
@@ -203,6 +227,8 @@ export async function fetchSearchTrafficInsights(
         domainAuthority: da,
         backlinks,
         backdomains,
+        domainTraffic,
+        pageTraffic,
         siteType,
         score: 0,
       };
@@ -210,10 +236,10 @@ export async function fetchSearchTrafficInsights(
     });
 
     // Sort by score desc and take top 5 for reporting
-    const topPages = enriched
+    const pages = enriched
       .filter((x) => x.url || x.domain)
-      .sort((a, b) => b.score - a.score)
-      .slice(0, 5);
+      .sort((a, b) => b.score - a.score);
+    const topPages = pages.slice(0, 5);
 
     const avgDomainAuthority = avg(enriched.map((x) => x.domainAuthority));
     const siteTypes: Record<SiteType, number> = { gov: 0, edu: 0, news: 0, blog: 0, retail: 0, forum: 0, media: 0, other: 0 };
@@ -225,6 +251,7 @@ export async function fetchSearchTrafficInsights(
       avgDomainAuthority,
       siteTypes,
       topPages,
+      pages,
       bestPage: topPages[0] || null,
     };
   });
@@ -272,10 +299,14 @@ export async function fetchContentExplorerForQueries(queries: string[]): Promise
     const maxOffset = Math.max(...items.map((r) => toNumberOrNull(r.topOffset) ?? 0), 0);
     const enriched: EnrichedResultItem[] = items.map((r) => {
       const url = r.url && r.url !== "N/A" ? String(r.url) : "";
-      const domain = extractHostname(r.domain || url);
-      const da = toNumberOrNull(r.domainAuthority);
-      const backlinks = parseHumanNumber(r.backlinks ?? null);
-      const backdomains = parseHumanNumber(r.backdomains ?? null);
+      const urlHost = extractHostname(url);
+      const fallbackHost = extractHostname(r.domain);
+      const domain = urlHost || fallbackHost;
+      const da = toNumberOrNull(r.ahrefs_domain?.DR) ?? toNumberOrNull(r.domainAuthority);
+      const backlinks = parseHumanNumber(r.ahrefs_domain?.RP ?? r.backlinks ?? null);
+      const backdomains = parseHumanNumber(r.ahrefs_domain?.RD ?? r.backdomains ?? null);
+      const domainTraffic = parseHumanNumber((r as any)?.ahrefs_domain?.ST ?? null);
+      const pageTraffic = parseHumanNumber((r as any)?.ahrefs_page?.ST ?? null);
       const topOffset = toNumberOrNull(r.topOffset);
       const siteType = classifySiteType(url || domain);
       const base: EnrichedResultItem = {
@@ -286,20 +317,31 @@ export async function fetchContentExplorerForQueries(queries: string[]): Promise
         domainAuthority: da,
         backlinks,
         backdomains,
+        domainTraffic,
+        pageTraffic,
         siteType,
         score: 0,
       };
       return { ...base, score: buildScore(base, maxOffset || 1) };
     });
 
-    const topPages = enriched
+    const pages = enriched
       .filter((x) => x.url || x.domain)
-      .sort((a, b) => b.score - a.score)
-      .slice(0, 5);
+      .sort((a, b) => b.score - a.score);
+    const topPages = pages.slice(0, 5);
 
     const avgDomainAuthority = avg(enriched.map((x) => x.domainAuthority));
     const siteTypes: Record<SiteType, number> = { gov: 0, edu: 0, news: 0, blog: 0, retail: 0, forum: 0, media: 0, other: 0 };
     for (const x of enriched) siteTypes[x.siteType] = (siteTypes[x.siteType] || 0) + 1;
+
+    const paa = Array.isArray((data as any)?.paa_list)
+      ? (data as any).paa_list.map((x: any) => ({
+          question: String(x?.question || "").trim(),
+          source_url: x?.source_url ? String(x.source_url) : undefined,
+          answer: x?.answer ? String(x.answer) : undefined,
+          topOffset: toNumberOrNull(x?.topOffset),
+        }))
+      : [];
 
     return {
       query: q,
@@ -307,7 +349,9 @@ export async function fetchContentExplorerForQueries(queries: string[]): Promise
       avgDomainAuthority,
       siteTypes,
       topPages,
+      pages,
       bestPage: topPages[0] || null,
+      paa,
     };
   });
 
