@@ -3,6 +3,7 @@ import { OpenAI } from "openai";
 import { convert } from "html-to-text";
 import { env } from "~/env";
 import { fetchKeywordCoverage, buildCoveragePromptParts } from "~/utils/keyword-coverage";
+import { fetchContentExplorerForQueries } from "~/utils/search-traffic";
 
 const openai = new OpenAI({ apiKey: env.OPENAI_API_KEY });
 
@@ -49,7 +50,7 @@ export async function POST(req: Request) {
     const bestQuery = input?.bestQuery ?? null;
     const keywordsArray = [input?.rank4, input?.rank5, input?.rank6, input?.rank7, input?.rank8, input?.rank9, input?.rank10]
       .filter(Boolean);
-    const keywordsList = keywordsArray.join("\n");
+    let keywordsList = keywordsArray.join("\n");
 
     const region = page.includes("holidaysmart.io") ? (page.match(/\/(hk|tw|sg|my|cn)\//i)?.[1]?.toLowerCase() || "hk") : "hk";
     const locale = {
@@ -68,9 +69,106 @@ export async function POST(req: Request) {
       if (coverage.success) {
         const { coveredText, uncoveredText } = buildCoveragePromptParts(coverage.covered, coverage.uncovered);
         coverageBlock = `\n\n# Keyword Coverage Data (for this page)\n- Covered (with GSC when available):\n${coveredText}\n\n- Uncovered (with Search Volume):\n${uncoveredText}\n`;
+
+        // Enrich Rank 4–10 keyword list with SV if available
+        const norm = (s: string) => String(s || "").trim().toLowerCase().replace(/\s+/g, " ");
+        const svMap = new Map<string, number | null>();
+        for (const item of [...(coverage.covered || []), ...(coverage.uncovered || [])]) {
+          if (!item?.text) continue;
+          svMap.set(norm(item.text), typeof item.searchVolume === "number" ? item.searchVolume : null);
+        }
+        const enrichWithSV = (raw: string): string => {
+          const str = String(raw || "").trim();
+          const name = str.includes("(") ? str.slice(0, str.indexOf("(")).trim() : str;
+          const sv = svMap.get(norm(name));
+          const svPart = `SV: ${typeof sv === "number" && isFinite(sv) ? sv : "N/A"}`;
+          if (str.includes("(")) {
+            const inside = str.slice(str.indexOf("(") + 1, str.lastIndexOf(")") >= 0 ? str.lastIndexOf(")") : str.length).trim();
+            const hasSV = /\bSV\s*:\s*/i.test(inside);
+            const newInside = hasSV ? inside : (inside ? `${svPart}, ${inside}` : svPart);
+            return `${name} (${newInside})`;
+          }
+          return `${name} (${svPart})`;
+        };
+        keywordsList = keywordsArray.map((line: string) => enrichWithSV(String(line))).join("\n");
       }
     } catch (_) {
       // ignore coverage enrichment failures to avoid blocking core analysis
+    }
+
+    // Optional: Content Explorer enrichment (top-3 by impressions)
+    let contentExplorerBlock = "";
+    try {
+      // Parse rank buckets to collect { keyword, impressions, position }
+      const parseEntries = (raw?: string): Array<{ keyword: string; impressions: number; position: number | null }> => {
+        if (!raw) return [];
+        const parts = String(raw).split(/\),\s+/).map((p, i, arr) => (i < arr.length - 1 && !p.endsWith(")")) ? (p + ")") : p);
+        const rows: Array<{ keyword: string; impressions: number; position: number | null }> = [];
+        for (const part of parts) {
+          const m = part.match(/^(.+?)\(\s*click\s*:\s*([\d.]+)\s*,\s*impression\s*:\s*([\d.]+)\s*,\s*position\s*:\s*([\d.]+)(?:\s*,\s*ctr\s*:\s*[\d.]+%\s*)?\)$/i);
+          if (m) {
+            const keyword = (m[1] || "").trim();
+            const imps = Number(m[3]);
+            const pos = Number(m[4]);
+            rows.push({ keyword, impressions: isFinite(imps) ? imps : 0, position: isFinite(pos) ? pos : null });
+          } else {
+            const name = part.includes("(") ? part.slice(0, part.indexOf("(")).trim() : part.trim();
+            if (name) rows.push({ keyword: name, impressions: 0, position: null });
+          }
+        }
+        return rows;
+      };
+      const allRows = [input?.rank4, input?.rank5, input?.rank6, input?.rank7, input?.rank8, input?.rank9, input?.rank10]
+        .filter(Boolean)
+        .flatMap((s: string) => parseEntries(s));
+      const normalize = (s: string) => s.normalize("NFKC").toLowerCase().replace(/[\u3000\s]+/g, "");
+      const byKey: Record<string, { keyword: string; impressions: number; positions: number[] }> = {};
+      for (const r of allRows) {
+        const k = normalize(r.keyword);
+        if (!k) continue;
+        if (!byKey[k] || r.impressions > byKey[k].impressions) {
+          byKey[k] = { keyword: r.keyword, impressions: r.impressions, positions: [] };
+        }
+        if (typeof r.position === "number" && isFinite(r.position)) {
+          (byKey[k].positions ||= []).push(r.position);
+        }
+      }
+      const topQueries = Object.values(byKey)
+        .sort((a, b) => b.impressions - a.impressions)
+        .slice(0, 3)
+        .map((x) => x.keyword);
+
+      if (topQueries.length > 0) {
+        const explorer = await fetchContentExplorerForQueries(topQueries);
+        // Build summary table per query
+        const rowFor = (q: string) => {
+          const ins = (explorer.insights || []).find((i: any) => normalize(i.query) === normalize(q));
+          const pages = (ins?.pages || ins?.topPages || []) as any[];
+          const withTraffic = pages.filter((p) => typeof p.pageTraffic === "number" && isFinite(p.pageTraffic) && p.pageTraffic > 0);
+          const nums = (arr: any[], pick: (x: any) => number | null) => arr.map(pick).filter((n): n is number => typeof n === "number" && isFinite(n));
+          const lowestDr = Math.min(...nums(withTraffic, (p) => typeof p.domainAuthority === "number" ? p.domainAuthority : null));
+          const avg = (arr: number[]) => arr.length ? (arr.reduce((a, b) => a + b, 0) / arr.length) : null;
+          const avgTraffic = avg(nums(withTraffic, (p) => p.pageTraffic as number));
+          const avgKw = avg(nums(withTraffic, (p) => typeof p.pageKeywords === "number" ? p.pageKeywords : null));
+          const avgBl = avg(nums(withTraffic, (p) => typeof p.backlinks === "number" ? p.backlinks : null));
+          const posArr = byKey[normalize(q)]?.positions || [];
+          const avgPos = posArr.length ? (posArr.reduce((a, b) => a + b, 0) / posArr.length) : null;
+          const drStr = isFinite(lowestDr) ? String(lowestDr) : "-";
+          const tStr = avgTraffic === null ? "-" : String(Math.round(avgTraffic));
+          const kwStr = avgKw === null ? "-" : String(Math.round(avgKw));
+          const posStr = avgPos === null ? "-" : (avgPos as number).toFixed(1);
+          const blStr = avgBl === null ? "-" : String(Math.round(avgBl));
+          return `| ${q} | ${drStr} | ${tStr} | ${kwStr} | ${posStr} | ${blStr} |`;
+        };
+        const table = [
+          "| Query | Lowest DR | Avg Traffic | Avg KW | Avg Pos. | Avg BL |",
+          "|-------|-----------|------------:|-------:|---------:|-------:|",
+          ...topQueries.map((q) => rowFor(q)),
+        ].join("\n");
+        contentExplorerBlock = `\n\n# Content Explorer Data (Top-3 by Impressions)\n${table}\n`;
+      }
+    } catch (_) {
+      // ignore explorer errors
     }
 
     const prompt = `
@@ -187,7 +285,7 @@ Reason: [succinct justification]
 - Default to plain text. If markdown is required, use ## and ### headers as specified and markdown tables for tabular data.
 # Output Structure
 Follow the exact section, table, and formatting guidance for consistency with automated workflow consumers. Never reveal chain-of-thought reasoning unless explicitly requested.
-${coverageBlock}`;
+${coverageBlock}${contentExplorerBlock}`;
 
 
     // Step 4: Call OpenAI

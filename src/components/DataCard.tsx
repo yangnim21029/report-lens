@@ -2,6 +2,7 @@
 
 import { memo, useCallback, useState } from "react";
 import { AnalysisModal } from "~/components/AnalysisModal";
+import { KeywordTable, TableShell } from "~/components/KeywordTable";
 import { extractAnalysisData, formatAsEmail, formatAsMarkdown } from "~/utils/extract-format-html";
 // Use server API route to avoid CORS / ngrok HTML warning
 
@@ -229,6 +230,45 @@ export const DataCard = memo(function DataCard({
   const parseBucket = (label: string, raw?: string | null): KwRow[] => {
     return splitEntries(raw).map((p) => parseEntry(label, p));
   };
+
+  // Generic Table (reusing the original structure) that supports custom headers/rows
+  const Table = (
+    {
+      title,
+      headers,
+      rows,
+      renderRow,
+    }: {
+      title?: string;
+      headers: string[];
+      rows: any[];
+      renderRow: (row: any, index: number) => React.ReactNode;
+    },
+  ) => (
+    <div className="mb-[var(--space-md)]">
+      {title && (
+        <div className="mb-[var(--space-xs)] text-left font-bold text-[var(--ink)] text-[var(--text-sm)]">{title}</div>
+      )}
+      {rows.length === 0 ? (
+        <div className="text-[var(--gray-5)] text-[var(--text-xs)]">No data</div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-[var(--text-xs)]">
+            <thead>
+              <tr className="border-b border-[var(--gray-7)] text-[var(--gray-4)]">
+                {headers.map((h, i) => (
+                  <th key={i} className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r, i) => renderRow(r, i))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
 
   const collectAllCurrentRows = (): KwRow[] => {
     const rowsTop = [
@@ -584,81 +624,111 @@ export const DataCard = memo(function DataCard({
             {explorerInsights && (
               <div className="mb-[var(--space-sm)] rounded-sm border border-[var(--gray-7)] bg-[var(--gray-9)] p-[var(--space-sm)] text-[var(--text-xs)] text-[var(--gray-3)]">
                 <div className="mb-[var(--space-xs)] font-bold text-[var(--ink)]">Content Explorer (Top-3 by Impressions)</div>
-                <div className="mb-[var(--space-xs)]">Queries: {(explorerInsights.pickedQueries || []).join(", ") || "-"}</div>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left">
-                    <thead>
-                      <tr className="border-b border-[var(--gray-7)] text-[var(--gray-4)]">
-                        <th className="px-[var(--space-sm)] py-[var(--space-xs)]">Title</th>
-                        <th className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap">Domain</th>
-                        <th className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap">Type</th>
-                        <th className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap">DR</th>
-                        <th className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap">Traffic</th>
-                        <th className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap">KW</th>
-                        <th className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap">BL</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {(() => {
-                        const insights = explorerInsights.insights || [];
-                        // merge and de-duplicate by url or title+domain across queries
-                        const map = new Map<string, any>();
-                        const keyFor = (x: any) => x?.url ? `u:${String(x.url).toLowerCase()}` : `t:${String(x.title || '').toLowerCase().trim()}|d:${String(x.domain || '').toLowerCase().trim()}`;
-                        const pickBetter = (a: any, b: any) => {
-                          const at = (typeof a.pageTraffic === 'number' ? a.pageTraffic : -1);
-                          const bt = (typeof b.pageTraffic === 'number' ? b.pageTraffic : -1);
-                          if (bt > at) return b; if (at > bt) return a;
-                          const as = typeof a.score === 'number' ? a.score : 0;
-                          const bs = typeof b.score === 'number' ? b.score : 0;
-                          return bs > as ? b : a;
-                        };
-                        insights.forEach((i: any) => {
-                          (i.pages || i.topPages || []).forEach((p: any) => {
-                            const k = keyFor(p);
-                            const prev = map.get(k);
-                            map.set(k, prev ? pickBetter(prev, p) : p);
-                          });
-                        });
-                        const rows: any[] = Array.from(map.values());
-                        // sort strictly by pageTraffic desc, fallback to score
-                        rows.sort((a, b) => {
-                          const at = (typeof a.pageTraffic === 'number' ? a.pageTraffic : -1);
-                          const bt = (typeof b.pageTraffic === 'number' ? b.pageTraffic : -1);
-                          if (bt !== at) return bt - at;
-                          const as = typeof a.score === 'number' ? a.score : 0;
-                          const bs = typeof b.score === 'number' ? b.score : 0;
-                          return bs - as;
-                        });
-                        const [top, rest] = [rows.slice(0, 5), rows.slice(5)];
-                        const showAll = explorerShowAll;
-                        if (!rows.length) return (
-                          <tr><td colSpan={6} className="px-[var(--space-sm)] py-[var(--space-xs)] text-[var(--gray-5)]">No results</td></tr>
-                        );
-                        const renderRow = (r: any, idx: number) => (
-                          <tr key={idx} className={idx % 2 === 0 ? "bg-[var(--gray-10)]" : undefined}>
-                            <td className="px-[var(--space-sm)] py-[var(--space-xs)] max-w-[40ch] truncate">
-                              {r.url ? (
-                                <a href={r.url} target="_blank" rel="noopener noreferrer" className="underline hover:text-[var(--accent-primary)]">{r.title}</a>
-                              ) : (r.title || "-")}
-                            </td>
-                            <td className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap">{r.domain || "-"}</td>
-                            <td className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap">{r.siteType || "-"}</td>
-                            <td className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap">{typeof r.domainAuthority === "number" ? r.domainAuthority : "-"}</td>
-                            <td className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap">{typeof r.pageTraffic === 'number' ? r.pageTraffic.toLocaleString?.() : '-'}</td>
-                            <td className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap">{typeof r.pageKeywords === 'number' ? r.pageKeywords.toLocaleString?.() : '-'}</td>
-                            <td className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap">{typeof r.backlinks === "number" ? r.backlinks.toLocaleString?.() : (typeof r.backlinks === 'number' ? r.backlinks : (r.backlinks || '-'))}</td>
-                          </tr>
-                        );
-                        return (
-                          <>
-                            {top.map((r, i) => renderRow(r, i))}
-                            {showAll && rest.map((r, i) => renderRow(r, i + top.length))}
-                          </>
-                        );
-                      })()}
-                    </tbody>
-                  </table>
-                </div>
+                {(() => {
+                  const picked: string[] = explorerInsights.pickedQueries || [];
+                  const allRows = collectAllCurrentRows();
+                  const posMap: Record<string, number[]> = {};
+                  allRows.forEach((r) => {
+                    const key = normalizeKeyword(r.keyword);
+                    const p = typeof r.position === 'number' && isFinite(r.position) ? r.position : null;
+                    if (!key || p === null) return;
+                    (posMap[key] ||= []).push(p);
+                  });
+
+                  const avg = (arr: number[]) => arr.length ? (arr.reduce((a,b)=>a+b,0)/arr.length) : null;
+                  const min = (arr: number[]) => arr.length ? Math.min(...arr) : null;
+
+                  const insights = explorerInsights.insights || [];
+                  const findInsight = (q: string) => insights.find((i: any) => normalizeKeyword(i.query) === normalizeKeyword(q));
+
+                  return (
+                      <TableShell
+                        headers={["Query", "Lowest DR", "Avg Traffic", "Avg KW", "Avg Pos.", "Avg BL"]}
+                        rows={picked}
+                        renderRow={(q: string, idx: number) => {
+                            const ins = findInsight(q);
+                            const pages = (ins?.pages || ins?.topPages || []) as any[];
+                            const withTraffic = pages.filter((p) => typeof p.pageTraffic === 'number' && isFinite(p.pageTraffic) && p.pageTraffic > 0);
+                            const drs = withTraffic.map((p) => typeof p.domainAuthority === 'number' ? p.domainAuthority : NaN).filter((n) => isFinite(n)) as number[];
+                            const bls = withTraffic.map((p) => typeof p.backlinks === 'number' ? p.backlinks : NaN).filter((n) => isFinite(n)) as number[];
+                            const traff = withTraffic.map((p) => p.pageTraffic as number);
+                            const kws = withTraffic.map((p) => typeof p.pageKeywords === 'number' ? p.pageKeywords : NaN).filter((n) => isFinite(n)) as number[];
+                            const key = normalizeKeyword(q);
+                            const poss = posMap[key] || [];
+
+                            const lowestDr = min(drs);
+                            const avgTraffic = avg(traff);
+                            const avgKw = avg(kws);
+                            const avgPos = avg(poss);
+                            const avgBl = avg(bls);
+
+                            return (
+                              <tr key={idx} className={idx % 2 === 0 ? "bg-[var(--gray-9)]" : undefined}>
+                                <td className="px-[var(--space-sm)] py-[var(--space-xs)] max-w-[40ch] truncate">{q}</td>
+                                <td className="px-[var(--space-sm)] py-[var(--space-xs)]">{lowestDr === null ? '-' : lowestDr}</td>
+                                <td className="px-[var(--space-sm)] py-[var(--space-xs)]">{avgTraffic === null ? '-' : Math.round(avgTraffic).toLocaleString?.()}</td>
+                                <td className="px-[var(--space-sm)] py-[var(--space-xs)]">{avgKw === null ? '-' : Math.round(avgKw).toLocaleString?.()}</td>
+                                <td className="px-[var(--space-sm)] py-[var(--space-xs)]">{avgPos === null ? '-' : (avgPos as number).toFixed(1)}</td>
+                                <td className="px-[var(--space-sm)] py-[var(--space-xs)]">{avgBl === null ? '-' : Math.round(avgBl).toLocaleString?.()}</td>
+                              </tr>
+                            );
+                          }}
+                      />
+                  );
+                })()}
+                {(() => {
+                  const insights = explorerInsights.insights || [];
+                  // merge and de-duplicate by url or title+domain across queries
+                  const map = new Map<string, any>();
+                  const keyFor = (x: any) => x?.url ? `u:${String(x.url).toLowerCase()}` : `t:${String(x.title || '').toLowerCase().trim()}|d:${String(x.domain || '').toLowerCase().trim()}`;
+                  const pickBetter = (a: any, b: any) => {
+                    const at = (typeof a.pageTraffic === 'number' ? a.pageTraffic : -1);
+                    const bt = (typeof b.pageTraffic === 'number' ? b.pageTraffic : -1);
+                    if (bt > at) return b; if (at > bt) return a;
+                    const as = typeof a.score === 'number' ? a.score : 0;
+                    const bs = typeof b.score === 'number' ? b.score : 0;
+                    return bs > as ? b : a;
+                  };
+                  insights.forEach((i: any) => {
+                    (i.pages || i.topPages || []).forEach((p: any) => {
+                      const k = keyFor(p);
+                      const prev = map.get(k);
+                      map.set(k, prev ? pickBetter(prev, p) : p);
+                    });
+                  });
+                  const allRows: any[] = Array.from(map.values());
+                  allRows.sort((a, b) => {
+                    const at = (typeof a.pageTraffic === 'number' ? a.pageTraffic : -1);
+                    const bt = (typeof b.pageTraffic === 'number' ? b.pageTraffic : -1);
+                    if (bt !== at) return bt - at;
+                    const as = typeof a.score === 'number' ? a.score : 0;
+                    const bs = typeof b.score === 'number' ? b.score : 0;
+                    return bs - as;
+                  });
+                  const visible = allRows.slice(0, 5).concat(explorerShowAll ? allRows.slice(5) : []);
+                  return (
+                    <TableShell
+                      headers={["Rank","Title","Domain","Type","DR","Traffic","KW","BL"]}
+                      rows={visible}
+                      renderRow={(r: any, idx: number) => (
+                        <tr key={idx} className={idx % 2 === 0 ? "bg-[var(--gray-9)]" : undefined}>
+                        <td className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap text-[var(--gray-4)]">{idx + 1}</td>
+                        <td className="px-[var(--space-sm)] py-[var(--space-xs)] max-w-[40ch] truncate font-medium text-[var(--ink)]">
+                          {r.url ? (
+                            <a href={r.url} target="_blank" rel="noopener noreferrer" className="underline hover:text-[var(--accent-primary)]">{r.title}</a>
+                          ) : (r.title || "-")}
+                        </td>
+                        <td className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap text-[var(--ink)]">{r.domain || "-"}</td>
+                        <td className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap text-[var(--ink)]">{r.siteType || "-"}</td>
+                        <td className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap text-[var(--ink)]">{typeof r.domainAuthority === "number" ? r.domainAuthority : "-"}</td>
+                        <td className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap text-[var(--ink)]">{typeof r.pageTraffic === 'number' ? r.pageTraffic.toLocaleString?.() : '-'}</td>
+                        <td className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap text-[var(--ink)]">{typeof r.pageKeywords === 'number' ? r.pageKeywords.toLocaleString?.() : '-'}</td>
+                        <td className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap text-[var(--ink)]">{typeof r.backlinks === "number" ? r.backlinks.toLocaleString?.() : (typeof r.backlinks === 'number' ? r.backlinks : (r.backlinks || '-'))}</td>
+                        </tr>
+                      )}
+                    />
+                  );
+                })()}
                 <div className="mt-[var(--space-xs)]">
                   <button
                     onClick={() => setExplorerShowAll((v) => !v)}
@@ -667,7 +737,7 @@ export const DataCard = memo(function DataCard({
                     {explorerShowAll ? 'Show Top 5' : 'Show All'}
                   </button>
                 </div>
-                {/* PAA List */}
+                {/* PAA Table using KeywordTable style */}
                 {(() => {
                   const insights = explorerInsights.insights || [];
                   const allPaaMap = new Map<string, { query: string; question: string; source_url?: string }>();
@@ -680,22 +750,24 @@ export const DataCard = memo(function DataCard({
                       if (!allPaaMap.has(key)) allPaaMap.set(key, { query: i.query, question: qRaw, source_url: p?.source_url });
                     });
                   });
-                  const allPaa = Array.from(allPaaMap.values());
-                  if (allPaa.length === 0) return null;
+                  const rows = Array.from(allPaaMap.values());
+                  if (rows.length === 0) return null;
                   return (
-                    <div className="mt-[var(--space-sm)]">
-                      <div className="mb-[var(--space-xs)] font-bold text-[var(--ink)]">People Also Ask</div>
-                      <ul className="list-disc pl-5">
-                        {allPaa.slice(0, 10).map((p, idx) => (
-                          <li key={idx} className="mb-[2px]">
-                            <span className="text-[var(--gray-5)] mr-1">[{p.query}]</span>
+                    <TableShell
+                      title="People Also Ask"
+                      headers={["Query", "Question"]}
+                      rows={rows.slice(0, 20)}
+                      renderRow={(p: any, idx: number) => (
+                        <tr key={idx} className={idx % 2 === 0 ? "bg-[var(--gray-9)]" : undefined}>
+                          <td className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap text-[var(--gray-4)]">{p.query}</td>
+                          <td className="px-[var(--space-sm)] py-[var(--space-xs)] max-w-[80ch] truncate text-[var(--ink)]">
                             {p.source_url ? (
                               <a href={p.source_url} target="_blank" rel="noopener noreferrer" className="underline hover:text-[var(--accent-primary)]">{p.question}</a>
                             ) : p.question}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
+                          </td>
+                        </tr>
+                      )}
+                    />
                   );
                 })()}
                 {(() => {
@@ -758,126 +830,13 @@ export const DataCard = memo(function DataCard({
               const rowsGt = parseBucket(">10", (data as any)?.current_rank_gt10);
               const rowsZero = parseBucket("", (data as any)?.zero_click_keywords);
 
-              const Table = ({ title, rows }: { title: string; rows: KwRow[] }) => (
-                <div className="mb-[var(--space-md)]">
-                  <div className="mb-[var(--space-xs)] text-left font-bold text-[var(--ink)] text-[var(--text-sm)]">{title}</div>
-                  {rows.length === 0 ? (
-                    <div className="text-[var(--gray-5)] text-[var(--text-xs)]">No data</div>
-                  ) : (
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-left text-[var(--text-xs)]">
-                        <thead>
-                          <tr className="border-b border-[var(--gray-7)] text-[var(--gray-4)]">
-                            <th className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap">Rank</th>
-                            <th className="px-[var(--space-sm)] py-[var(--space-xs)]">Keyword</th>
-                            <th className="px-[var(--space-sm)] py-[var(--space-xs)]">SV</th>
-                            <th className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap">Clicks</th>
-                            <th className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap">Impr.</th>
-                            <th className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap">Pos.</th>
-                            <th className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap">CTR</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {rows.map((r, i) => (
-                            <tr key={i} className={i % 2 === 0 ? "bg-[var(--gray-9)]" : undefined}>
-                              <td className="px-[var(--space-sm)] py-[var(--space-xs)] text-[var(--gray-4)] whitespace-nowrap">{r.rank}</td>
-                              <td className="max-w-[28ch] truncate px-[var(--space-sm)] py-[var(--space-xs)] font-medium text-[var(--ink)]">{r.keyword}</td>
-                              <td className="px-[var(--space-sm)] py-[var(--space-xs)] text-[var(--ink)]">
-                                {(() => {
-                                  const key = normalizeKeyword(r.keyword);
-                                  const sv = svMap[key];
-                                  if (typeof sv !== "number") {
-                                    // Light debug to help diagnose mismatches
-                                    try { console.debug("[DataCard] SV miss", { raw: r.keyword, key }); } catch {}
-                                  }
-                                  return typeof sv === "number" ? sv : "-";
-                                })()}
-                              </td>
-                              <td className="px-[var(--space-sm)] py-[var(--space-xs)] text-[var(--ink)] whitespace-nowrap">
-                                {(() => {
-                                  const key = normalizeKeyword(r.keyword);
-                                  const prev = prevStatMap[key]?.clicks ?? null;
-                                  const now = r.clicks ?? null;
-                                  if (!compareMode) return now ?? "-";
-                                  const cls = prev === null || now === null
-                                    ? "text-[var(--gray-4)]"
-                                    : now > prev
-                                      ? "text-green-500"
-                                      : now < prev
-                                        ? "text-red-500"
-                                        : "text-[var(--gray-4)]";
-                                  return <span className={`font-semibold ${cls}`}>{prev ?? "-"} → {now ?? "-"}</span>;
-                                })()}
-                              </td>
-                              <td className="px-[var(--space-sm)] py-[var(--space-xs)] text-[var(--ink)] whitespace-nowrap">
-                                {(() => {
-                                  const key = normalizeKeyword(r.keyword);
-                                  const prev = prevStatMap[key]?.impressions ?? null;
-                                  const now = r.impressions ?? null;
-                                  if (!compareMode) return now ?? "-";
-                                  const cls = prev === null || now === null
-                                    ? "text-[var(--gray-4)]"
-                                    : now > prev
-                                      ? "text-green-500"
-                                      : now < prev
-                                        ? "text-red-500"
-                                        : "text-[var(--gray-4)]";
-                                  return <span className={`font-semibold ${cls}`}>{prev ?? "-"} → {now ?? "-"}</span>;
-                                })()}
-                              </td>
-                              <td className="px-[var(--space-sm)] py-[var(--space-xs)] text-[var(--ink)] whitespace-nowrap">
-                                {(() => {
-                                  const key = normalizeKeyword(r.keyword);
-                                  const prev = prevStatMap[key]?.position ?? null;
-                                  const now = r.position ?? null;
-                                  if (!compareMode) return now?.toFixed ? now.toFixed(1) : now ?? "-";
-                                  const fmt = (n: number | null) => (n === null ? "-" : (n.toFixed ? n.toFixed(1) : String(n)));
-                                  const cls = prev === null || now === null
-                                    ? "text-[var(--gray-4)]"
-                                    : now < prev
-                                      ? "text-green-500"
-                                      : now > prev
-                                        ? "text-red-500"
-                                        : "text-[var(--gray-4)]";
-                                  return <span className={`font-semibold ${cls}`}>{fmt(prev)} → {fmt(now)}</span>;
-                                })()}
-                              </td>
-                              <td className="px-[var(--space-sm)] py-[var(--space-xs)] text-[var(--ink)] whitespace-nowrap">
-                                {(() => {
-                                  const key = normalizeKeyword(r.keyword);
-                                  const p = prevStatMap[key];
-                                  const prevCtr = p && typeof p.clicks === "number" && typeof p.impressions === "number" && p.impressions > 0
-                                    ? (p.clicks / p.impressions) * 100
-                                    : null;
-                                  const nowCtr = typeof r.clicks === "number" && typeof r.impressions === "number" && r.impressions > 0
-                                    ? (r.clicks / r.impressions) * 100
-                                    : null;
-                                  if (!compareMode) return nowCtr === null ? "-" : `${nowCtr.toFixed(2)}%`;
-                                  const cls = prevCtr === null || nowCtr === null
-                                    ? "text-[var(--gray-4)]"
-                                    : nowCtr > prevCtr
-                                      ? "text-green-500"
-                                      : nowCtr < prevCtr
-                                        ? "text-red-500"
-                                        : "text-[var(--gray-4)]";
-                                  const fmt = (n: number | null) => (n === null ? "-" : `${n.toFixed(2)}%`);
-                                  return <span className={`font-semibold ${cls}`}>{fmt(prevCtr)} → {fmt(nowCtr)}</span>;
-                                })()}
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
-                </div>
-              );
+              
 
               return (
                 <>
-                  <Table title="Top Keywords (1–3)" rows={rowsTop} />
-                  <Table title="Opportunity Keywords (4–10)" rows={rowsMid} />
-                  <Table title=">10 Keywords" rows={rowsGt} />
+                  <KeywordTable title="Top Keywords (1–3)" rows={rowsTop} svMap={svMap} prevStatMap={prevStatMap} compareMode={compareMode} />
+                  <KeywordTable title="Opportunity Keywords (4–10)" rows={rowsMid} svMap={svMap} prevStatMap={prevStatMap} compareMode={compareMode} />
+                  <KeywordTable title=">10 Keywords" rows={rowsGt} svMap={svMap} prevStatMap={prevStatMap} compareMode={compareMode} />
                   <div className="mt-[var(--space-sm)]">
                     <button
                       onClick={() => setShowZero(!showZero)}
@@ -892,7 +851,9 @@ export const DataCard = memo(function DataCard({
                     >
                       {compareMode ? "比較模式：開" : "比較模式：關"}
                     </button>
-                    {showZero && <Table title="Zero-click Keywords" rows={rowsZero} />}
+                    {showZero && (
+                      <KeywordTable title="Zero-click Keywords" rows={rowsZero} svMap={svMap} prevStatMap={prevStatMap} compareMode={compareMode} />
+                    )}
                   </div>
                 </>
               );
