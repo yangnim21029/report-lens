@@ -76,7 +76,7 @@ export interface QueryInsight {
 
 export interface SearchTrafficInsights {
   success: boolean;
-  pickedQueries: string[]; // top-3 by SV
+  pickedQueries: string[]; // queries analyzed
   insights: QueryInsight[];
   overall: {
     avgDomainAuthority: number | null;
@@ -252,3 +252,74 @@ export function pickTop3QueriesBySV(keywords: KeywordItemLike[]): string[] {
     .map((k) => String(k.text));
 }
 
+// Content Explorer: accept queries directly (no need for SV)
+export async function fetchContentExplorerForQueries(queries: string[]): Promise<SearchTrafficInsights> {
+  const picked = (queries || []).map((q) => String(q)).filter(Boolean).slice(0, 3);
+
+  const responses = await Promise.all(picked.map(async (q) => ({ q, data: await fetchUpstream(q) })));
+
+  const insights: QueryInsight[] = responses.map(({ q, data }) => {
+    const items = (data?.results || []) as UpstreamResultItem[];
+    const maxOffset = Math.max(...items.map((r) => toNumberOrNull(r.topOffset) ?? 0), 0);
+    const enriched: EnrichedResultItem[] = items.map((r) => {
+      const url = r.url && r.url !== "N/A" ? String(r.url) : "";
+      const domain = extractHostname(r.domain || url);
+      const da = toNumberOrNull(r.domainAuthority);
+      const backlinks = parseHumanNumber(r.backlinks ?? null);
+      const backdomains = parseHumanNumber(r.backdomains ?? null);
+      const topOffset = toNumberOrNull(r.topOffset);
+      const siteType = classifySiteType(url || domain);
+      const base: EnrichedResultItem = {
+        title: r.title && r.title !== "N/A" ? String(r.title) : (url || domain || "N/A"),
+        url: url || "",
+        domain,
+        topOffset,
+        domainAuthority: da,
+        backlinks,
+        backdomains,
+        siteType,
+        score: 0,
+      };
+      return { ...base, score: buildScore(base, maxOffset || 1) };
+    });
+
+    const topPages = enriched
+      .filter((x) => x.url || x.domain)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 5);
+
+    const avgDomainAuthority = avg(enriched.map((x) => x.domainAuthority));
+    const siteTypes: Record<SiteType, number> = { gov: 0, edu: 0, news: 0, blog: 0, retail: 0, forum: 0, media: 0, other: 0 };
+    for (const x of enriched) siteTypes[x.siteType] = (siteTypes[x.siteType] || 0) + 1;
+
+    return {
+      query: q,
+      count: data?.count ?? enriched.length,
+      avgDomainAuthority,
+      siteTypes,
+      topPages,
+      bestPage: topPages[0] || null,
+    };
+  });
+
+  const overallAvgDA = avg(insights.map((i) => i.avgDomainAuthority));
+  const overallTypes: Record<SiteType, number> = { gov: 0, edu: 0, news: 0, blog: 0, retail: 0, forum: 0, media: 0, other: 0 };
+  for (const it of insights) {
+    for (const k of Object.keys(overallTypes) as SiteType[]) {
+      overallTypes[k] += it.siteTypes[k] || 0;
+    }
+  }
+  const allTop = insights.flatMap((i) => i.topPages);
+  const bestOverall = allTop.sort((a, b) => b.score - a.score)[0] || null;
+
+  return {
+    success: true,
+    pickedQueries: picked,
+    insights,
+    overall: {
+      avgDomainAuthority: overallAvgDA,
+      siteTypes: overallTypes,
+      bestPage: bestOverall,
+    },
+  };
+}

@@ -3,7 +3,7 @@
 import { memo, useCallback, useState } from "react";
 import { AnalysisModal } from "~/components/AnalysisModal";
 import { extractAnalysisData, formatAsEmail, formatAsMarkdown } from "~/utils/extract-format-html";
-import { fetchSearchTrafficInsights } from "~/utils/search-traffic";
+import { fetchContentExplorerForQueries } from "~/utils/search-traffic";
 
 export const DataCard = memo(function DataCard({
   data,
@@ -23,9 +23,9 @@ export const DataCard = memo(function DataCard({
   const [svError, setSvError] = useState<string | null>(null);
   const [showZero, setShowZero] = useState(false);
   const [compareMode, setCompareMode] = useState(true);
-  const [isFetchingTraffic, setIsFetchingTraffic] = useState(false);
-  const [trafficError, setTrafficError] = useState<string | null>(null);
-  const [trafficInsights, setTrafficInsights] = useState<any | null>(null);
+  const [isFetchingExplorer, setIsFetchingExplorer] = useState(false);
+  const [explorerError, setExplorerError] = useState<string | null>(null);
+  const [explorerInsights, setExplorerInsights] = useState<any | null>(null);
 
   const handleAnalyze = useCallback(() => {
     const run = async () => {
@@ -248,32 +248,37 @@ export const DataCard = memo(function DataCard({
     return [...rowsTop, ...rowsMid, ...rowsGt];
   };
 
-  const handleFetchTraffic = useCallback(async () => {
-    if (isFetchingTraffic) return;
-    setIsFetchingTraffic(true);
-    setTrafficError(null);
+  const handleContentExplorer = useCallback(async () => {
+    if (isFetchingExplorer) return;
+    setIsFetchingExplorer(true);
+    setExplorerError(null);
     try {
       const rows = collectAllCurrentRows();
-      const uniq: Record<string, { text: string; searchVolume: number | null }> = {};
+      // unique by keyword with max impressions
+      const uniq: Record<string, { keyword: string; impressions: number }> = {};
       for (const r of rows) {
         const key = normalizeKeyword(r.keyword);
+        const imps = typeof r.impressions === "number" && isFinite(r.impressions) ? r.impressions : 0;
         if (!key) continue;
-        const sv = svMap[key] ?? null;
-        if (!(key in uniq)) uniq[key] = { text: r.keyword, searchVolume: typeof sv === "number" ? sv : null };
+        const current = uniq[key];
+        if (!current || imps > current.impressions) {
+          uniq[key] = { keyword: r.keyword, impressions: imps };
+        }
       }
-      const list = Object.values(uniq);
-      if (list.filter((x) => typeof x.searchVolume === "number" && (x.searchVolume as number) > 0).length === 0) {
-        throw new Error("請先補搜尋量 (Add SV) 後再試一次");
-      }
-      const res = await fetchSearchTrafficInsights(list);
-      setTrafficInsights(res);
-      try { console.debug("[DataCard] traffic insights", res); } catch {}
+      const topByImpr = Object.values(uniq)
+        .sort((a, b) => b.impressions - a.impressions)
+        .slice(0, 3)
+        .map((x) => x.keyword);
+      if (topByImpr.length === 0) throw new Error("沒有可用的關鍵字（缺少 Impressions）");
+      const res = await fetchContentExplorerForQueries(topByImpr);
+      setExplorerInsights(res);
+      try { console.debug("[DataCard] content explorer", res); } catch {}
     } catch (e: any) {
-      setTrafficError(e?.message || String(e));
+      setExplorerError(e?.message || String(e));
     } finally {
-      setIsFetchingTraffic(false);
+      setIsFetchingExplorer(false);
     }
-  }, [isFetchingTraffic, data, svMap]);
+  }, [isFetchingExplorer, data]);
 
   // Normalize keywords to improve matching between API texts and table rows
   const normalizeKeyword = (raw: string): string => {
@@ -554,33 +559,37 @@ export const DataCard = memo(function DataCard({
                   {isFetchingSV ? "…" : "補搜尋量"}
                 </button>
                 <button
-                  onClick={handleFetchTraffic}
-                  disabled={isFetchingTraffic}
+                  onClick={handleContentExplorer}
+                  disabled={isFetchingExplorer}
                   className="border border-[var(--gray-5)] bg-transparent px-[var(--space-sm)] py-1 font-bold text-[var(--gray-3)] text-[var(--text-xs)] uppercase hover:border-[var(--gray-4)] hover:bg-[var(--gray-8)] disabled:opacity-50"
-                  title="Fetch Traffic Insights (Top-3 by SV)"
+                  title="Content Explorer (Top-3 by Impressions)"
                 >
-                  {isFetchingTraffic ? "…" : "Traffic Insights"}
+                  {isFetchingExplorer ? "…" : "Content Explorer"}
                 </button>
                 {svError && (
                   <span className="text-red-500 text-[var(--text-xs)]">{svError}</span>
                 )}
-                {trafficError && (
-                  <span className="text-red-500 text-[var(--text-xs)]">{trafficError}</span>
+                {explorerError && (
+                  <span className="text-red-500 text-[var(--text-xs)]">{explorerError}</span>
                 )}
               </div>
             </div>
-            {trafficInsights && (
+            {explorerInsights && (
               <div className="mb-[var(--space-sm)] rounded-sm border border-[var(--gray-7)] bg-[var(--gray-9)] p-[var(--space-sm)] text-[var(--text-xs)] text-[var(--gray-3)]">
-                <div className="mb-[var(--space-xs)] font-bold text-[var(--ink)]">Traffic Insights (Top-3 by SV)</div>
-                <div className="mb-[var(--space-xs)]">Queries: {(trafficInsights.pickedQueries || []).join(", ") || "-"}</div>
-                <div className="mb-[var(--space-xs)]">Avg DA: {trafficInsights.overall?.avgDomainAuthority ?? "-"}</div>
-                {trafficInsights.overall?.bestPage && (
-                  <div className="mb-[var(--space-xs)]">
-                    Best Page: <a href={trafficInsights.overall.bestPage.url} target="_blank" rel="noopener noreferrer" className="underline hover:text-[var(--accent-primary)]">
-                      {trafficInsights.overall.bestPage.title}
-                    </a> ({trafficInsights.overall.bestPage.domain})
-                  </div>
-                )}
+                <div className="mb-[var(--space-xs)] font-bold text-[var(--ink)]">Content Explorer (Top-3 by Impressions)</div>
+                <div className="mb-[var(--space-xs)]">Queries: {(explorerInsights.pickedQueries || []).join(", ") || "-"}</div>
+                <div className="mb-[var(--space-xs)]">Avg DA: {explorerInsights.overall?.avgDomainAuthority ?? "-"}</div>
+                {(() => {
+                  const best = explorerInsights.overall?.bestPage;
+                  if (!best) return null;
+                  return (
+                    <div className="mb-[var(--space-xs)]">
+                      Best Page: <a href={best.url} target="_blank" rel="noopener noreferrer" className="underline hover:text-[var(--accent-primary)]">
+                        {best.title}
+                      </a> ({best.domain})
+                    </div>
+                  );
+                })()}
               </div>
             )}
             {(() => {
