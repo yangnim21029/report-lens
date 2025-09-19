@@ -3,6 +3,7 @@
 import { memo, useCallback, useState } from "react";
 import { AnalysisModal } from "~/components/AnalysisModal";
 import { extractAnalysisData, formatAsEmail, formatAsMarkdown } from "~/utils/extract-format-html";
+import { fetchSearchTrafficInsights } from "~/utils/search-traffic";
 
 export const DataCard = memo(function DataCard({
   data,
@@ -22,6 +23,9 @@ export const DataCard = memo(function DataCard({
   const [svError, setSvError] = useState<string | null>(null);
   const [showZero, setShowZero] = useState(false);
   const [compareMode, setCompareMode] = useState(true);
+  const [isFetchingTraffic, setIsFetchingTraffic] = useState(false);
+  const [trafficError, setTrafficError] = useState<string | null>(null);
+  const [trafficInsights, setTrafficInsights] = useState<any | null>(null);
 
   const handleAnalyze = useCallback(() => {
     const run = async () => {
@@ -224,6 +228,52 @@ export const DataCard = memo(function DataCard({
   const parseBucket = (label: string, raw?: string | null): KwRow[] => {
     return splitEntries(raw).map((p) => parseEntry(label, p));
   };
+
+  const collectAllCurrentRows = (): KwRow[] => {
+    const rowsTop = [
+      ...parseBucket("1", (data as any)?.current_rank_1),
+      ...parseBucket("2", (data as any)?.current_rank_2),
+      ...parseBucket("3", (data as any)?.current_rank_3),
+    ];
+    const rowsMid = [
+      ...parseBucket("4", (data as any)?.current_rank_4),
+      ...parseBucket("5", (data as any)?.current_rank_5),
+      ...parseBucket("6", (data as any)?.current_rank_6),
+      ...parseBucket("7", (data as any)?.current_rank_7),
+      ...parseBucket("8", (data as any)?.current_rank_8),
+      ...parseBucket("9", (data as any)?.current_rank_9),
+      ...parseBucket("10", (data as any)?.current_rank_10),
+    ];
+    const rowsGt = parseBucket(">10", (data as any)?.current_rank_gt10);
+    return [...rowsTop, ...rowsMid, ...rowsGt];
+  };
+
+  const handleFetchTraffic = useCallback(async () => {
+    if (isFetchingTraffic) return;
+    setIsFetchingTraffic(true);
+    setTrafficError(null);
+    try {
+      const rows = collectAllCurrentRows();
+      const uniq: Record<string, { text: string; searchVolume: number | null }> = {};
+      for (const r of rows) {
+        const key = normalizeKeyword(r.keyword);
+        if (!key) continue;
+        const sv = svMap[key] ?? null;
+        if (!(key in uniq)) uniq[key] = { text: r.keyword, searchVolume: typeof sv === "number" ? sv : null };
+      }
+      const list = Object.values(uniq);
+      if (list.filter((x) => typeof x.searchVolume === "number" && (x.searchVolume as number) > 0).length === 0) {
+        throw new Error("請先補搜尋量 (Add SV) 後再試一次");
+      }
+      const res = await fetchSearchTrafficInsights(list);
+      setTrafficInsights(res);
+      try { console.debug("[DataCard] traffic insights", res); } catch {}
+    } catch (e: any) {
+      setTrafficError(e?.message || String(e));
+    } finally {
+      setIsFetchingTraffic(false);
+    }
+  }, [isFetchingTraffic, data, svMap]);
 
   // Normalize keywords to improve matching between API texts and table rows
   const normalizeKeyword = (raw: string): string => {
@@ -503,11 +553,36 @@ export const DataCard = memo(function DataCard({
                 >
                   {isFetchingSV ? "…" : "補搜尋量"}
                 </button>
+                <button
+                  onClick={handleFetchTraffic}
+                  disabled={isFetchingTraffic}
+                  className="border border-[var(--gray-5)] bg-transparent px-[var(--space-sm)] py-1 font-bold text-[var(--gray-3)] text-[var(--text-xs)] uppercase hover:border-[var(--gray-4)] hover:bg-[var(--gray-8)] disabled:opacity-50"
+                  title="Fetch Traffic Insights (Top-3 by SV)"
+                >
+                  {isFetchingTraffic ? "…" : "Traffic Insights"}
+                </button>
                 {svError && (
                   <span className="text-red-500 text-[var(--text-xs)]">{svError}</span>
                 )}
+                {trafficError && (
+                  <span className="text-red-500 text-[var(--text-xs)]">{trafficError}</span>
+                )}
               </div>
             </div>
+            {trafficInsights && (
+              <div className="mb-[var(--space-sm)] rounded-sm border border-[var(--gray-7)] bg-[var(--gray-9)] p-[var(--space-sm)] text-[var(--text-xs)] text-[var(--gray-3)]">
+                <div className="mb-[var(--space-xs)] font-bold text-[var(--ink)]">Traffic Insights (Top-3 by SV)</div>
+                <div className="mb-[var(--space-xs)]">Queries: {(trafficInsights.pickedQueries || []).join(", ") || "-"}</div>
+                <div className="mb-[var(--space-xs)]">Avg DA: {trafficInsights.overall?.avgDomainAuthority ?? "-"}</div>
+                {trafficInsights.overall?.bestPage && (
+                  <div className="mb-[var(--space-xs)]">
+                    Best Page: <a href={trafficInsights.overall.bestPage.url} target="_blank" rel="noopener noreferrer" className="underline hover:text-[var(--accent-primary)]">
+                      {trafficInsights.overall.bestPage.title}
+                    </a> ({trafficInsights.overall.bestPage.domain})
+                  </div>
+                )}
+              </div>
+            )}
             {(() => {
               // Build previous stats map: keyword -> {clicks, impressions, position}
               const prevStatMap = (() => {
