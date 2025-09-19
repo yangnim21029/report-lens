@@ -584,30 +584,59 @@ export const DataCard = memo(function DataCard({
               <div className="mb-[var(--space-sm)] rounded-sm border border-[var(--gray-7)] bg-[var(--gray-9)] p-[var(--space-sm)] text-[var(--text-xs)] text-[var(--gray-3)]">
                 <div className="mb-[var(--space-xs)] font-bold text-[var(--ink)]">Content Explorer (Top-3 by Impressions)</div>
                 <div className="mb-[var(--space-xs)]">Queries: {(explorerInsights.pickedQueries || []).join(", ") || "-"}</div>
-                <div className="mb-[var(--space-xs)]">Avg DA: {explorerInsights.overall?.avgDomainAuthority ?? "-"}</div>
-                {(() => {
-                  const best = explorerInsights.overall?.bestPage;
-                  if (!best) return null;
-                  return (
-                    <div className="mb-[var(--space-xs)]">
-                      Best Page: <a href={best.url} target="_blank" rel="noopener noreferrer" className="underline hover:text-[var(--accent-primary)]">
-                        {best.title}
-                      </a> ({best.domain})
-                    </div>
-                  );
-                })()}
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left">
+                    <thead>
+                      <tr className="border-b border-[var(--gray-7)] text-[var(--gray-4)]">
+                        <th className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap">Query</th>
+                        <th className="px-[var(--space-sm)] py-[var(--space-xs)]">Title</th>
+                        <th className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap">Domain</th>
+                        <th className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap">Type</th>
+                        <th className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap">DA</th>
+                        <th className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap">Backlinks</th>
+                        <th className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap">Offset</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(() => {
+                        const insights = explorerInsights.insights || [];
+                        const rows: any[] = insights.flatMap((i: any) => {
+                          const top = (i.topPages || []).slice(0, 3);
+                          return top.map((p: any) => ({ query: i.query, ...p }));
+                        });
+                        if (!rows.length) return (
+                          <tr><td colSpan={7} className="px-[var(--space-sm)] py-[var(--space-xs)] text-[var(--gray-5)]">No results</td></tr>
+                        );
+                        return rows.map((r: any, idx: number) => (
+                          <tr key={idx} className={idx % 2 === 0 ? "bg-[var(--gray-10)]" : undefined}>
+                            <td className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap">{r.query}</td>
+                            <td className="px-[var(--space-sm)] py-[var(--space-xs)] max-w-[40ch] truncate">
+                              {r.url ? (
+                                <a href={r.url} target="_blank" rel="noopener noreferrer" className="underline hover:text-[var(--accent-primary)]">{r.title}</a>
+                              ) : (r.title || "-")}
+                            </td>
+                            <td className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap">{r.domain || "-"}</td>
+                            <td className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap">{r.siteType || "-"}</td>
+                            <td className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap">{typeof r.domainAuthority === "number" ? r.domainAuthority : "-"}</td>
+                            <td className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap">{typeof r.backlinks === "number" ? r.backlinks : "-"}</td>
+                            <td className="px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap">{typeof r.topOffset === "number" ? r.topOffset : "-"}</td>
+                          </tr>
+                        ));
+                      })()}
+                    </tbody>
+                  </table>
+                </div>
                 {(() => {
                   const t = explorerInsights.overall?.siteTypes as Record<string, number> | undefined;
                   if (!t) return null;
                   const entries = Object.entries(t).filter(([, v]) => typeof v === "number" && v > 0);
                   if (entries.length === 0) return null;
-                  const label = (k: string) => k;
                   return (
                     <div className="mt-[var(--space-xs)] flex flex-wrap items-center gap-[4px]">
                       <span className="mr-[4px] text-[var(--gray-5)]">Types:</span>
                       {entries.map(([k, v], i) => (
                         <span key={i} className="rounded-sm bg-[var(--gray-8)] px-[6px] py-[2px] text-[var(--ink)]">
-                          {label(k)} {v}
+                          {k} {v}
                         </span>
                       ))}
                     </div>
