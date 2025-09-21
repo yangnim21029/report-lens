@@ -54,13 +54,14 @@ export async function POST(req: Request) {
     const suggestionThreshold = clickedSvValues.length ? Math.min(...clickedSvValues) : null;
 
     const seenSuggestions = new Set<string>();
-    const sortBySvAsc = (a: any, b: any) => {
+    const sortBySvDesc = (a: any, b: any) => {
       const aSv = toNumber(a?.searchVolume);
       const bSv = toNumber(b?.searchVolume);
       if (aSv === null && bSv === null) return 0;
       if (aSv === null) return 1;
       if (bSv === null) return -1;
-      return aSv - bSv;
+      if (aSv === bSv) return 0;
+      return (bSv ?? 0) - (aSv ?? 0);
     };
 
     const normalize = (text: string | undefined | null) =>
@@ -75,17 +76,14 @@ export async function POST(req: Request) {
         .filter((t) => t.length > 0),
     );
 
-    const qualifyingUncovered = uncoveredAll
+    const suggestionCandidates = uncoveredAll
       .filter((item: any) => {
-        const sv = toNumber(item?.searchVolume);
-        if (sv === null) return false;
         const norm = normalize(item?.text);
         if (!norm) return false;
         if (coveredNormalized.has(norm)) return false;
-        if (suggestionThreshold === null) return sv > 0;
-        return sv < suggestionThreshold;
+        return true;
       })
-      .sort(sortBySvAsc);
+      .sort(sortBySvDesc);
 
     const suggested: any[] = [];
     const pushUnique = (item: any) => {
@@ -95,18 +93,9 @@ export async function POST(req: Request) {
       suggested.push(item);
     };
 
-    qualifyingUncovered.forEach((item) => {
-      if (suggested.length < 10) pushUnique(item);
+    suggestionCandidates.forEach((item) => {
+      pushUnique(item);
     });
-
-    if (suggested.length < 10) {
-      uncoveredAll
-        .filter((item: any) => toNumber(item?.searchVolume) !== null)
-        .sort(sortBySvAsc)
-        .forEach((item) => {
-          if (suggested.length < 10) pushUnique(item);
-        });
-    }
 
     // Sort covered keywords by highest GSC clicks first, then take top N
     const covered = coveredAll.length
@@ -130,7 +119,7 @@ export async function POST(req: Request) {
         success: true,
         covered,
         uncovered,
-        suggestions: suggested.slice(0, 10),
+        suggestions: suggested,
         suggestionThreshold,
         debugId,
       },

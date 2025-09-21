@@ -25,8 +25,8 @@ export const DataCard = memo(function DataCard({
   const [potentialKeywords, setPotentialKeywords] = useState<
     { keyword: string; searchVolume: number | null; clicks: number | null }[]
   >([]);
-  const [potentialThreshold, setPotentialThreshold] = useState<number | null>(null);
   const [hasFetchedCoverage, setHasFetchedCoverage] = useState(false);
+  const [showPotential, setShowPotential] = useState(false);
   const [showZero, setShowZero] = useState(false);
   const [compareMode, setCompareMode] = useState(true);
   const [isFetchingExplorer, setIsFetchingExplorer] = useState(false);
@@ -353,7 +353,7 @@ export const DataCard = memo(function DataCard({
     setIsFetchingSV(true);
     setSvError(null);
     setPotentialKeywords([]);
-    setPotentialThreshold(null);
+    setShowPotential(false);
     setHasFetchedCoverage(false);
     try {
       const res = await fetch("/api/keyword/coverage", {
@@ -405,15 +405,9 @@ export const DataCard = memo(function DataCard({
         .filter(Boolean) as { keyword: string; searchVolume: number | null; clicks: number | null }[];
 
       setPotentialKeywords(normalized);
-      setPotentialThreshold(
-        typeof json?.suggestionThreshold === "number" && Number.isFinite(json.suggestionThreshold)
-          ? json.suggestionThreshold
-          : null,
-      );
     } catch (e: any) {
       setSvError(e?.message || String(e));
       setPotentialKeywords([]);
-      setPotentialThreshold(null);
     } finally {
       setHasFetchedCoverage(true);
       setIsFetchingSV(false);
@@ -904,29 +898,36 @@ export const DataCard = memo(function DataCard({
               return (
                 <>
                   {potentialKeywords.length > 0 && (
-                    <TableShell
-                      title={
-                        potentialThreshold !== null
-                          ? `潛在關鍵字 (SV < ${Math.round(potentialThreshold).toLocaleString?.() || potentialThreshold})`
-                          : "潛在關鍵字"
-                      }
-                      headers={["#", "Keyword", "Search Volume", "Clicks"]}
-                      rows={potentialKeywords}
-                      renderRow={(row, idx) => (
-                        <tr key={row.keyword} className={idx % 2 === 0 ? "bg-[var(--gray-9)]" : undefined}>
-                          <td className="px-[var(--space-sm)] py-[var(--space-xs)] text-[var(--gray-4)]">{idx + 1}</td>
-                          <td className="px-[var(--space-sm)] py-[var(--space-xs)] max-w-[40ch] truncate text-[var(--ink)]">{row.keyword}</td>
-                          <td className="px-[var(--space-sm)] py-[var(--space-xs)] text-[var(--ink)]">
-                            {row.searchVolume === null
-                              ? "-"
-                              : Math.round(row.searchVolume).toLocaleString?.() ?? row.searchVolume}
-                          </td>
-                          <td className="px-[var(--space-sm)] py-[var(--space-xs)] text-[var(--ink)]">
-                            {row.clicks === null ? "-" : row.clicks}
-                          </td>
-                        </tr>
+                    <div className="mb-[var(--space-sm)]">
+                      <button
+                        onClick={() => setShowPotential((v) => !v)}
+                        className="border border-[var(--gray-5)] bg-transparent px-[var(--space-sm)] py-1 font-bold text-[var(--gray-3)] text-[var(--text-xs)] uppercase hover:border-[var(--gray-4)] hover:bg-[var(--gray-8)]"
+                      >
+                        {showPotential
+                          ? "隱藏潛在關鍵字"
+                          : `顯示潛在關鍵字 (${potentialKeywords.length})`}
+                      </button>
+                      {showPotential && (
+                        <TableShell
+                          headers={["#", "Keyword", "Search Volume", "Clicks"]}
+                          rows={potentialKeywords}
+                          renderRow={(row, idx) => (
+                            <tr key={row.keyword} className={idx % 2 === 0 ? "bg-[var(--gray-9)]" : undefined}>
+                              <td className="px-[var(--space-sm)] py-[var(--space-xs)] text-[var(--gray-4)]">{idx + 1}</td>
+                              <td className="px-[var(--space-sm)] py-[var(--space-xs)] max-w-[40ch] truncate text-[var(--ink)]">{row.keyword}</td>
+                              <td className="px-[var(--space-sm)] py-[var(--space-xs)] text-[var(--ink)]">
+                                {row.searchVolume === null
+                                  ? "-"
+                                  : Math.round(row.searchVolume).toLocaleString?.() ?? row.searchVolume}
+                              </td>
+                              <td className="px-[var(--space-sm)] py-[var(--space-xs)] text-[var(--ink)]">
+                                {row.clicks === null ? "-" : row.clicks}
+                              </td>
+                            </tr>
+                          )}
+                        />
                       )}
-                    />
+                    </div>
                   )}
                   {potentialKeywords.length === 0 && hasFetchedCoverage && !isFetchingSV && !svError && (
                     <div className="mb-[var(--space-sm)] text-[var(--gray-5)] text-[var(--text-xs)]">
