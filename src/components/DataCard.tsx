@@ -22,6 +22,11 @@ export const DataCard = memo(function DataCard({
   const [svMap, setSvMap] = useState<Record<string, number | null>>({});
   const [isFetchingSV, setIsFetchingSV] = useState(false);
   const [svError, setSvError] = useState<string | null>(null);
+  const [potentialKeywords, setPotentialKeywords] = useState<
+    { keyword: string; searchVolume: number | null; clicks: number | null }[]
+  >([]);
+  const [potentialThreshold, setPotentialThreshold] = useState<number | null>(null);
+  const [hasFetchedCoverage, setHasFetchedCoverage] = useState(false);
   const [showZero, setShowZero] = useState(false);
   const [compareMode, setCompareMode] = useState(true);
   const [isFetchingExplorer, setIsFetchingExplorer] = useState(false);
@@ -347,15 +352,17 @@ export const DataCard = memo(function DataCard({
     if (!data?.page || isFetchingSV) return;
     setIsFetchingSV(true);
     setSvError(null);
+    setPotentialKeywords([]);
+    setPotentialThreshold(null);
+    setHasFetchedCoverage(false);
     try {
       const res = await fetch("/api/keyword/coverage", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        // Rely on backend default capping/sorting; no need to send limit
-        body: JSON.stringify({ url: data.page }),
+        body: JSON.stringify({ url: data.page, limit: 60 }),
       });
       const json = await res.json();
-      if (!json?.success) throw new Error(json?.error || "Failed to fetch SV");
+      if (!json?.success) throw new Error(json?.error || "Failed to fetch coverage");
       const map: Record<string, number | null> = {};
       const fill = (arr: any[]) => {
         (arr || []).forEach((item) => {
@@ -379,12 +386,39 @@ export const DataCard = memo(function DataCard({
         });
       } catch {}
       setSvMap(map);
+
+      const suggestions = Array.isArray(json?.suggestions) ? json.suggestions : [];
+      const normalized = suggestions
+        .map((item: any) => {
+          const keyword = String(item?.text || "").trim();
+          if (!keyword) return null;
+          const displayKeyword = keyword.replace(/[\s\u3000]+/g, "");
+          if (!displayKeyword) return null;
+          const sv = typeof item?.searchVolume === "number" && Number.isFinite(item.searchVolume)
+            ? item.searchVolume
+            : null;
+          const clicks = typeof item?.gsc?.clicks === "number" && Number.isFinite(item.gsc.clicks)
+            ? item.gsc.clicks
+            : null;
+          return { keyword: displayKeyword, searchVolume: sv, clicks };
+        })
+        .filter(Boolean) as { keyword: string; searchVolume: number | null; clicks: number | null }[];
+
+      setPotentialKeywords(normalized);
+      setPotentialThreshold(
+        typeof json?.suggestionThreshold === "number" && Number.isFinite(json.suggestionThreshold)
+          ? json.suggestionThreshold
+          : null,
+      );
     } catch (e: any) {
       setSvError(e?.message || String(e));
+      setPotentialKeywords([]);
+      setPotentialThreshold(null);
     } finally {
+      setHasFetchedCoverage(true);
       setIsFetchingSV(false);
     }
-  }, [data?.page, isFetchingSV]);
+  }, [data?.page, isFetchingSV, normalizeKeyword]);
 
   return (
     <article className="group relative border border-[var(--gray-7)] bg-[var(--gray-8)] transition-all duration-[var(--duration-normal)] hover:border-[var(--gray-4)]">
@@ -636,9 +670,9 @@ export const DataCard = memo(function DataCard({
                   onClick={handleFetchSV}
                   disabled={isFetchingSV}
                   className="border border-[var(--gray-5)] bg-transparent px-[var(--space-sm)] py-1 font-bold text-[var(--gray-3)] text-[var(--text-xs)] uppercase hover:border-[var(--gray-4)] hover:bg-[var(--gray-8)] disabled:opacity-50"
-                  title="Fetch Search Volume"
+                  title="補搜尋量與潛在關鍵字"
                 >
-                  {isFetchingSV ? "…" : "補搜尋量"}
+                  {isFetchingSV ? "…" : "補搜尋量 / 潛在"}
                 </button>
                 <button
                   onClick={handleContentExplorer}
@@ -869,6 +903,36 @@ export const DataCard = memo(function DataCard({
 
               return (
                 <>
+                  {potentialKeywords.length > 0 && (
+                    <TableShell
+                      title={
+                        potentialThreshold !== null
+                          ? `潛在關鍵字 (SV < ${Math.round(potentialThreshold).toLocaleString?.() || potentialThreshold})`
+                          : "潛在關鍵字"
+                      }
+                      headers={["#", "Keyword", "Search Volume", "Clicks"]}
+                      rows={potentialKeywords}
+                      renderRow={(row, idx) => (
+                        <tr key={row.keyword} className={idx % 2 === 0 ? "bg-[var(--gray-9)]" : undefined}>
+                          <td className="px-[var(--space-sm)] py-[var(--space-xs)] text-[var(--gray-4)]">{idx + 1}</td>
+                          <td className="px-[var(--space-sm)] py-[var(--space-xs)] max-w-[40ch] truncate text-[var(--ink)]">{row.keyword}</td>
+                          <td className="px-[var(--space-sm)] py-[var(--space-xs)] text-[var(--ink)]">
+                            {row.searchVolume === null
+                              ? "-"
+                              : Math.round(row.searchVolume).toLocaleString?.() ?? row.searchVolume}
+                          </td>
+                          <td className="px-[var(--space-sm)] py-[var(--space-xs)] text-[var(--ink)]">
+                            {row.clicks === null ? "-" : row.clicks}
+                          </td>
+                        </tr>
+                      )}
+                    />
+                  )}
+                  {potentialKeywords.length === 0 && hasFetchedCoverage && !isFetchingSV && !svError && (
+                    <div className="mb-[var(--space-sm)] text-[var(--gray-5)] text-[var(--text-xs)]">
+                      未找到潛在關鍵字
+                    </div>
+                  )}
                   <KeywordTable title="Top Keywords (1–3)" rows={rowsTop} svMap={svMap} prevStatMap={prevStatMap} compareMode={compareMode} />
                   <KeywordTable title="Opportunity Keywords (4–10)" rows={rowsMid} svMap={svMap} prevStatMap={prevStatMap} compareMode={compareMode} />
                   <KeywordTable title=">10 Keywords" rows={rowsGt} svMap={svMap} prevStatMap={prevStatMap} compareMode={compareMode} />
