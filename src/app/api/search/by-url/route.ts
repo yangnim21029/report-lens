@@ -180,6 +180,7 @@ page_stats AS (
     SELECT 
         page,
         SUM(total_clicks) as page_total_clicks,
+        SUM(total_impressions) as page_total_impressions,
         COUNT(DISTINCT query) as total_keywords,
 
         -- Current period keyword counts
@@ -276,7 +277,10 @@ zero_click_keywords AS (
 
 -- Final output
 SELECT 
-    ps.page, ps.page_total_clicks as total_clicks, cb.current_best_query as best_query,
+    ps.page, ps.page_total_clicks as total_clicks,
+    ps.page_total_impressions as total_impressions,
+    ROUND(ps.page_total_clicks::numeric * 100.0 / NULLIF(ps.page_total_impressions, 0), 2) as total_ctr,
+    cb.current_best_query as best_query,
     cb.current_best_clicks as best_query_clicks, ROUND(cb.current_best_position, 1) as best_query_position,
     CASE WHEN cb.current_best_query != pb.prev_best_query THEN '🔄 ' ELSE '' END || pb.prev_best_query as "prev_main_keyword",
     pb.prev_best_clicks as "prev_keyword_traffic", ROUND(pb.prev_best_position, 1) as "prev_keyword_rank",
@@ -364,6 +368,7 @@ aggregated_data AS (
 page_stats AS (
     SELECT page,
         SUM(total_clicks) as page_total_clicks,
+        SUM(total_impressions) as page_total_impressions,
         COUNT(DISTINCT query) as total_keywords,
         COUNT(DISTINCT query) FILTER (WHERE current_rank_bucket BETWEEN 1 AND 10 AND COALESCE(recent_clicks,0) > 0) as current_keywords_1to10_count,
         COUNT(DISTINCT query) FILTER (WHERE current_rank_bucket = 11 AND COALESCE(recent_clicks,0) > 0) as current_keywords_gt10_count
@@ -435,6 +440,8 @@ previous_keyword_pivot AS (
 SELECT 
     ps.page,
     ps.page_total_clicks as total_clicks,
+    ps.page_total_impressions as total_impressions,
+    ROUND(ps.page_total_clicks::numeric * 100.0 / NULLIF(ps.page_total_impressions, 0), 2) as total_ctr,
     cb.current_best_query as best_query,
     cb.current_best_clicks as best_query_clicks,
     ROUND(cb.current_best_position, 1) as best_query_position,

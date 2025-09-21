@@ -147,6 +147,8 @@ export const DataCard = memo(function DataCard({
   // Get click intensity for visual indicator
   const clickIntensity = Math.min(100, (data.best_query_clicks || 0) / 10);
 
+  const CTR_FULL_SCORE = 39.8;
+
   // Map new field name and parse numeric rank change if available
   const positionChange: number | null = (() => {
     const raw = (data as any)?.keyword_rank_change;
@@ -478,30 +480,60 @@ export const DataCard = memo(function DataCard({
             </span>
           )}
           {(() => {
-            // Use ALL clicked keywords (ranks 1–10 and >10), weighted by impressions
-            const rows = [
-              (data as any)?.current_rank_1,
-              (data as any)?.current_rank_2,
-              (data as any)?.current_rank_3,
-              (data as any)?.current_rank_4,
-              (data as any)?.current_rank_5,
-              (data as any)?.current_rank_6,
-              (data as any)?.current_rank_7,
-              (data as any)?.current_rank_8,
-              (data as any)?.current_rank_9,
-              (data as any)?.current_rank_10,
-              (data as any)?.current_rank_gt10,
-            ].flatMap((s: any) => parseBucket("", s));
+            const toNumber = (value: unknown): number | null => {
+              if (typeof value === "number") return Number.isFinite(value) ? value : null;
+              if (typeof value === "string") {
+                const numeric = Number(value.replace(/[^0-9.\-]/g, ""));
+                return Number.isFinite(numeric) ? numeric : null;
+              }
+              return null;
+            };
 
-            const clicks = rows.map(r => r.clicks).filter((v): v is number => v !== null && isFinite(v));
-            const imps = rows.map(r => r.impressions).filter((v): v is number => v !== null && isFinite(v));
-            const totalClicks = clicks.reduce((a, b) => a + b, 0);
-            const totalImpr = imps.reduce((a, b) => a + b, 0);
-            if (!isFinite(totalClicks) || !isFinite(totalImpr) || totalImpr <= 0) return null;
+            const totalClicks = toNumber(data.total_clicks);
+            const totalImpressions = toNumber((data as any)?.total_impressions);
+            let ctr = toNumber((data as any)?.total_ctr);
+            let clicksForCtr = totalClicks ?? null;
+            let impsForCtr = totalImpressions ?? null;
 
-            const wCtr = (totalClicks / totalImpr) * 100;
-            const wCtrInt = Math.round(wCtr);
-            const score = Math.min(100, Math.round((wCtr / 30) * 100));
+            if (ctr === null && clicksForCtr !== null && impsForCtr !== null && impsForCtr > 0) {
+              ctr = (clicksForCtr / impsForCtr) * 100;
+            }
+
+            if (ctr === null || impsForCtr === null || impsForCtr <= 0) {
+              const rows = [
+                (data as any)?.current_rank_1,
+                (data as any)?.current_rank_2,
+                (data as any)?.current_rank_3,
+                (data as any)?.current_rank_4,
+                (data as any)?.current_rank_5,
+                (data as any)?.current_rank_6,
+                (data as any)?.current_rank_7,
+                (data as any)?.current_rank_8,
+                (data as any)?.current_rank_9,
+                (data as any)?.current_rank_10,
+                (data as any)?.current_rank_gt10,
+              ].flatMap((s: any) => parseBucket("", s));
+
+              let aggClicks = 0;
+              let aggImpr = 0;
+              rows.forEach((row) => {
+                if (typeof row.clicks === "number" && Number.isFinite(row.clicks)) aggClicks += row.clicks;
+                if (typeof row.impressions === "number" && Number.isFinite(row.impressions)) aggImpr += row.impressions;
+              });
+
+              if (!Number.isFinite(aggClicks) || !Number.isFinite(aggImpr) || aggImpr <= 0) return null;
+              ctr = (aggClicks / aggImpr) * 100;
+              clicksForCtr = aggClicks;
+              impsForCtr = aggImpr;
+            }
+
+            if (ctr === null) return null;
+
+            const score = Math.max(0, Math.min(100, Math.round((ctr / CTR_FULL_SCORE) * 100)));
+            const ctrRounded = Math.round(ctr);
+            const ctrDisplay = ctr.toFixed(2);
+            const clicksDisplay = clicksForCtr !== null ? Math.round(clicksForCtr).toLocaleString() : "-";
+            const impsDisplay = impsForCtr !== null ? Math.round(impsForCtr).toLocaleString() : "-";
 
             const size = 56; // px
             const stroke = 6;
@@ -510,7 +542,10 @@ export const DataCard = memo(function DataCard({
             const offset = c * (1 - score / 100);
 
             return (
-              <div className="flex items-center gap-[var(--space-xs)]" title={`Weighted CTR (clicked): ${wCtrInt}% • SEO Score (CTR30): ${score}`}>
+              <div
+                className="flex items-center gap-[var(--space-xs)]"
+                title={`CTR: ${ctrDisplay}% • Clicks: ${clicksDisplay} • Impr.: ${impsDisplay} • SEO Score (CTR${CTR_FULL_SCORE}): ${score}`}
+              >
                 <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="shrink-0">
                   <circle cx={size/2} cy={size/2} r={r} stroke="var(--gray-7)" strokeWidth={stroke} fill="none" />
                   <circle
@@ -531,7 +566,7 @@ export const DataCard = memo(function DataCard({
                 </svg>
                 <div className="flex flex-col leading-tight">
                   <span className="font-bold text-[var(--ink)] text-[var(--text-xs)]">SEO Score</span>
-                  <span className="text-[var(--gray-6)] text-[10px]">CTR30 = 100 • wCTR {wCtrInt}%</span>
+                  <span className="text-[var(--gray-6)] text-[10px]">CTR{CTR_FULL_SCORE} = 100 • CTR {ctrRounded}%</span>
                 </div>
               </div>
             );
