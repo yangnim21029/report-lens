@@ -8,15 +8,34 @@ import { RegionFilter } from "~/components/RegionFilter";
 
 interface CSVRow {
   Keyword: string;
-  "Current URL": string;
-  "Current organic traffic": string;
-  "Current position": string;
+  Country: string;
+  Location: string;
+  Entities: string;
+  "SERP features": string;
   Volume: string;
+  "Previous organic traffic": string;
+  "Current organic traffic": string;
+  "Organic traffic change": string;
+  "Previous position": string;
+  "Current position": string;
   "Position change": string;
+  "Previous URL inside": string;
+  "Previous URL": string;
+  "Current URL inside": string;
+  "Current URL": string;
+  Branded: string;
+  Local: string;
+  Navigational: string;
+  Informational: string;
+  Commercial: string;
+  Transactional: string;
 }
 
 interface ProcessedData {
   page: string;
+  country?: string | null;
+  regionCode?: string | null;
+  regions?: string[] | null;
   best_query: string | null;
   best_query_clicks: number | null;
   best_query_position: number | null;
@@ -25,22 +44,40 @@ interface ProcessedData {
   prev_best_query?: string | null;
   prev_best_clicks?: number | null;
   prev_best_position?: number | null;
+  prev_main_keyword?: string | null;
+  prev_keyword_rank?: number | null;
+  prev_keyword_traffic?: number | null;
   // 統計
   total_clicks: number | null;
+  keywords_1to10_count: number | null;
   keywords_4to10_count: number | null;
   total_keywords: number | null;
+  keywords_1to10_ratio: string | null;
   keywords_4to10_ratio: string | null;
   potential_traffic: number | null;
-  rank_1: string | null;
-  rank_2: string | null;
-  rank_3: string | null;
-  rank_4: string | null;
-  rank_5: string | null;
-  rank_6: string | null;
-  rank_7: string | null;
-  rank_8: string | null;
-  rank_9: string | null;
-  rank_10: string | null;
+  // DataCard expects these fields
+  current_rank_1?: string | null;
+  current_rank_2?: string | null;
+  current_rank_3?: string | null;
+  current_rank_4?: string | null;
+  current_rank_5?: string | null;
+  current_rank_6?: string | null;
+  current_rank_7?: string | null;
+  current_rank_8?: string | null;
+  current_rank_9?: string | null;
+  current_rank_10?: string | null;
+  current_rank_gt10?: string | null;
+  // Legacy rank properties for compatibility
+  rank_1?: string | null;
+  rank_2?: string | null;
+  rank_3?: string | null;
+  rank_4?: string | null;
+  rank_5?: string | null;
+  rank_6?: string | null;
+  rank_7?: string | null;
+  rank_8?: string | null;
+  rank_9?: string | null;
+  rank_10?: string | null;
   // For TSV: preformatted items for ranks 1-10
   rank_items_1to10?: string[];
 }
@@ -92,14 +129,31 @@ export default function CustomPage() {
 
   // Process combined rows into aggregated data
   const processRows = useCallback((rows: CSVRow[]): ProcessedData[] => {
+    const inferRegionFromUrl = (url: string): string | null => {
+      const lower = url.toLowerCase();
+      if (lower.includes("/hk/")) return "hk";
+      if (lower.includes("/tw/")) return "tw";
+      if (lower.includes("/sg/")) return "sg";
+      if (lower.includes("/my/")) return "my";
+      if (lower.includes("/cn/")) return "cn";
+      return null;
+    };
+
+    const normalizeRegionCode = (value: string): string | null => {
+      const v = value.trim().toLowerCase();
+      if (!v) return null;
+      if (["hk", "hong kong", "hongkong"].includes(v)) return "hk";
+      if (["tw", "taiwan"].includes(v)) return "tw";
+      if (["sg", "singapore"].includes(v)) return "sg";
+      if (["my", "malaysia"].includes(v)) return "my";
+      if (["cn", "china", "china mainland", "mainland china"].includes(v)) return "cn";
+      return null;
+    };
+
     // Group by URL
     const urlGroups = new Map<string, CSVRow[]>();
     rows.forEach(row => {
-      const url =
-        row["Current URL"] ||
-        (row as any)["URL"] ||
-        (row as any)["Current URL inside"] ||
-        "";
+      const url = row["Current URL"] || row["Current URL inside"] || "";
       if (url) {
         if (!urlGroups.has(url)) urlGroups.set(url, []);
         urlGroups.get(url)!.push(row);
@@ -109,14 +163,7 @@ export default function CustomPage() {
     // Process each URL group
     const processed: ProcessedData[] = [];
     urlGroups.forEach((keywords, url) => {
-      // Helpers for flexible field mapping and safe parsing
-      const pick = (obj: Record<string, any>, keys: string[]): string => {
-        for (const k of keys) {
-          const v = obj[k];
-          if (v !== undefined && String(v).trim() !== "") return String(v);
-        }
-        return "";
-      };
+      // Helpers for safe parsing
       const toInt = (val: string | number): number => {
         const s = String(val ?? "").replace(/[ ,]/g, "");
         const n = parseInt(s, 10);
@@ -129,218 +176,148 @@ export default function CustomPage() {
       };
       // Find CURRENT best query from position 1-3 (highest traffic)
       const topRanking = keywords.filter(k => {
-        const pos = toFloat(
-          pick(k as any, ["Current position", "Position", "Pos"])
-        );
+        const pos = toFloat(k["Current position"]);
         return pos >= 1 && pos <= 3;
       }).sort((a, b) => {
-        const trafficA = toInt(
-          pick(a as any, [
-            "Current organic traffic",
-            "Organic traffic",
-            "Clicks",
-            "Traffic",
-          ])
-        );
-        const trafficB = toInt(
-          pick(b as any, [
-            "Current organic traffic",
-            "Organic traffic",
-            "Clicks",
-            "Traffic",
-          ])
-        );
+        const trafficA = toInt(a["Current organic traffic"]);
+        const trafficB = toInt(b["Current organic traffic"]);
         return trafficB - trafficA;
       });
 
       // If no keywords in position 1-3, find best from all
       const bestKeyword = topRanking[0] || keywords.sort((a, b) => {
-        const trafficA = toInt(
-          pick(a as any, [
-            "Current organic traffic",
-            "Organic traffic",
-            "Clicks",
-            "Traffic",
-          ])
-        );
-        const trafficB = toInt(
-          pick(b as any, [
-            "Current organic traffic",
-            "Organic traffic",
-            "Clicks",
-            "Traffic",
-          ])
-        );
+        const trafficA = toInt(a["Current organic traffic"]);
+        const trafficB = toInt(b["Current organic traffic"]);
         return trafficB - trafficA;
       })[0];
-      
+
       // Find PREVIOUS best query (highest previous traffic)
       const prevBestKeyword = keywords.sort((a, b) => {
-        const trafficA = toInt(
-          pick(a as any, [
-            "Previous organic traffic",
-            "Prev. organic traffic",
-            "Previous clicks",
-            "Previous traffic",
-          ])
-        );
-        const trafficB = toInt(
-          pick(b as any, [
-            "Previous organic traffic",
-            "Prev. organic traffic",
-            "Previous clicks",
-            "Previous traffic",
-          ])
-        );
+        const trafficA = toInt(a["Previous organic traffic"]);
+        const trafficB = toInt(b["Previous organic traffic"]);
         return trafficB - trafficA;
       })[0];
-      
+
       // Find keywords ranking 1-10 and 4-10
       const rank1to10 = keywords.filter(k => {
-        const pos = toFloat(
-          pick(k as any, ["Current position", "Position", "Pos"])
-        );
+        const pos = toFloat(k["Current position"]);
         return pos >= 1 && pos <= 10;
       }).sort((a, b) => {
-        const posA = toFloat(pick(a as any, ["Current position", "Position", "Pos"]));
-        const posB = toFloat(pick(b as any, ["Current position", "Position", "Pos"]));
+        const posA = toFloat(a["Current position"]);
+        const posB = toFloat(b["Current position"]);
         return posA - posB;
       });
 
       const rank4to10 = keywords.filter(k => {
-        const pos = toFloat(
-          pick(k as any, ["Current position", "Position", "Pos"])
-        );
+        const pos = toFloat(k["Current position"]);
         return pos >= 4 && pos <= 10;
       }).sort((a, b) => {
-        const posA = toFloat(pick(a as any, ["Current position", "Position", "Pos"]));
-        const posB = toFloat(pick(b as any, ["Current position", "Position", "Pos"]));
+        const posA = toFloat(a["Current position"]);
+        const posB = toFloat(b["Current position"]);
         return posA - posB;
       });
 
       // Group by rank position (1-10) and preformat items for TSV
       const rankGroups: { [key: number]: string[] } = {};
+      const rankGt10: string[] = [];
+      const zeroClickEntries: string[] = [];
       const items1to10: string[] = [];
       const seenNames = new Set<string>();
-      rank1to10.forEach(k => {
-        const pos = Math.round(
-          toFloat(pick(k as any, ["Current position", "Position", "Pos"]))
-        );
-        if (pos >= 1 && pos <= 10) {
-          if (!rankGroups[pos]) rankGroups[pos] = [];
-          const traffic = pick(k as any, [
-            "Current organic traffic",
-            "Organic traffic",
-            "Clicks",
-            "Traffic",
-          ]) || "0";
-          const volume = pick(k as any, [
-            "Volume",
-            "Search volume",
-            "Search Volume",
-            "MSV",
-            "SV",
-          ]) || "0";
-          const keywordText = pick(k as any, ["Keyword", "Query", "keyword"]);
-          rankGroups[pos].push(`${keywordText || "(N/A)"}(${traffic}|${volume})`);
 
-          const posFloat = toFloat(pick(k as any, ["Current position", "Position", "Pos"])) || 0;
-          const name = (keywordText || "(N/A)").trim();
-          if (!seenNames.has(name)) {
-            seenNames.add(name);
-            items1to10.push(`${name} (SV: ${volume || "0"}, Clicks: ${traffic}, Pos: ${posFloat.toFixed(1)})`);
+      const formatBucketEntry = (row: CSVRow) => {
+        const keywordText = (row.Keyword || "(N/A)").trim();
+        const clicks = toInt(row["Current organic traffic"]);
+        const volume = toInt(row.Volume);
+        const position = toFloat(row["Current position"]);
+        const entry = `${keywordText}(click: ${clicks}, impression: ${volume}, position: ${position.toFixed(1)})`;
+        return { keywordText, clicks, volume, position, entry };
+      };
+
+      keywords.forEach((row) => {
+        const { keywordText, clicks, volume, position, entry } = formatBucketEntry(row);
+        const rounded = Math.round(position);
+        if (position >= 1 && position <= 10) {
+          (rankGroups[rounded] ||= []).push(entry);
+          if (!seenNames.has(keywordText)) {
+            seenNames.add(keywordText);
+            items1to10.push(
+              `${keywordText} (SV: ${volume || 0}, Clicks: ${clicks}, Pos: ${position.toFixed(1)})`,
+            );
           }
+        } else if (position > 10) {
+          rankGt10.push(entry);
+        }
+        if (clicks === 0) {
+          zeroClickEntries.push(entry);
         }
       });
 
       // Calculate total traffic from ALL keywords for this URL
       const totalClicks = keywords.reduce((sum, k) => {
-        const t = toInt(
-          pick(k as any, [
-            "Current organic traffic",
-            "Organic traffic",
-            "Clicks",
-            "Traffic",
-          ])
-        );
-        return sum + t;
+        return sum + toInt(k["Current organic traffic"]);
       }, 0);
 
       // Calculate potential traffic (sum of traffic from rank 4-10)
       const potentialTraffic = rank4to10.reduce((sum, k) => {
-        const t = toInt(
-          pick(k as any, [
-            "Current organic traffic",
-            "Organic traffic",
-            "Clicks",
-            "Traffic",
-          ])
-        );
-        return sum + t;
+        return sum + toInt(k["Current organic traffic"]);
       }, 0);
+
+      const regionCandidates = new Set<string>();
+      keywords.forEach((k) => {
+        const candidate = normalizeRegionCode(k.Country || k.Location);
+        if (candidate) regionCandidates.add(candidate);
+      });
+      const urlRegion = inferRegionFromUrl(url);
+      if (urlRegion) regionCandidates.add(urlRegion);
+
+      const countryRaw = keywords[0]?.Country || keywords[0]?.Location || "";
+      const countryRegion = normalizeRegionCode(countryRaw);
+      if (countryRegion) regionCandidates.add(countryRegion);
+
+      const regions = Array.from(regionCandidates);
+      const regionCode = countryRegion || regions[0] || null;
 
       processed.push({
         page: url,
-        best_query:
-          (bestKeyword && pick(bestKeyword as any, ["Keyword", "Query", "keyword"])) ||
-          null,
-        best_query_clicks:
-          (bestKeyword &&
-            toInt(
-              pick(bestKeyword as any, [
-                "Current organic traffic",
-                "Organic traffic",
-                "Clicks",
-                "Traffic",
-              ]),
-            )) || null,
-        best_query_position:
-          (bestKeyword &&
-            toFloat(
-              pick(bestKeyword as any, ["Current position", "Position", "Pos"]),
-            )) || null,
-        best_query_volume:
-          (bestKeyword &&
-            toInt(
-              pick(bestKeyword as any, [
-                "Volume",
-                "Search volume",
-                "Search Volume",
-                "MSV",
-                "SV",
-              ]),
-            )) || null,
-        // 前期數據（若無則為 null）
-        prev_best_query:
-          (prevBestKeyword &&
-            pick(prevBestKeyword as any, ["Keyword", "Query", "keyword"])) || null,
-        prev_best_clicks:
-          (prevBestKeyword &&
-            toInt(
-              pick(prevBestKeyword as any, [
-                "Previous organic traffic",
-                "Prev. organic traffic",
-                "Previous clicks",
-                "Previous traffic",
-              ]),
-            )) || null,
-        prev_best_position:
-          (prevBestKeyword &&
-            toFloat(
-              pick(prevBestKeyword as any, [
-                "Previous position",
-                "Prev. position",
-              ]),
-            )) || null,
+        country: countryRaw || null,
+        regionCode,
+        regions: regions.length ? regions : null,
+        best_query: bestKeyword?.Keyword || null,
+        best_query_clicks: bestKeyword ? toInt(bestKeyword["Current organic traffic"]) : null,
+        best_query_position: bestKeyword ? toFloat(bestKeyword["Current position"]) : null,
+        best_query_volume: bestKeyword ? toInt(bestKeyword.Volume) : null,
+        // 前期數據
+        prev_best_query: prevBestKeyword?.Keyword || null,
+        prev_best_clicks: prevBestKeyword ? toInt(prevBestKeyword["Previous organic traffic"]) : null,
+        prev_best_position: prevBestKeyword ? toFloat(prevBestKeyword["Previous position"]) : null,
+        prev_main_keyword: prevBestKeyword?.Keyword || null,
+        prev_keyword_rank: prevBestKeyword ? toFloat(prevBestKeyword["Previous position"]) : null,
+        prev_keyword_traffic: prevBestKeyword ? toInt(prevBestKeyword["Previous organic traffic"]) : null,
         // 統計
         total_clicks: totalClicks,
+        keywords_1to10_count: rank1to10.length,
         keywords_4to10_count: rank4to10.length,
         total_keywords: keywords.length,
-        keywords_4to10_ratio:
-          keywords.length > 0
-            ? `${((rank4to10.length / keywords.length) * 100).toFixed(1)}%`
-            : null,
+        keywords_1to10_ratio: keywords.length > 0
+          ? `${((rank1to10.length / keywords.length) * 100).toFixed(1)}%`
+          : null,
+        keywords_4to10_ratio: keywords.length > 0
+          ? `${((rank4to10.length / keywords.length) * 100).toFixed(1)}%`
+          : null,
         potential_traffic: potentialTraffic,
+        // DataCard expects current_rank_X format
+        current_rank_1: rankGroups[1]?.join(", ") || null,
+        current_rank_2: rankGroups[2]?.join(", ") || null,
+        current_rank_3: rankGroups[3]?.join(", ") || null,
+        current_rank_4: rankGroups[4]?.join(", ") || null,
+        current_rank_5: rankGroups[5]?.join(", ") || null,
+        current_rank_6: rankGroups[6]?.join(", ") || null,
+        current_rank_7: rankGroups[7]?.join(", ") || null,
+        current_rank_8: rankGroups[8]?.join(", ") || null,
+        current_rank_9: rankGroups[9]?.join(", ") || null,
+        current_rank_10: rankGroups[10]?.join(", ") || null,
+        current_rank_gt10: rankGt10.join(", ") || null,
+        // Legacy compatibility
         rank_1: rankGroups[1]?.join(", ") || null,
         rank_2: rankGroups[2]?.join(", ") || null,
         rank_3: rankGroups[3]?.join(", ") || null,
@@ -389,9 +366,14 @@ export default function CustomPage() {
 
   // Filter data based on selected region
   const filteredData = useMemo(() => {
-    return selectedRegion === "all" 
-      ? csvData 
-      : csvData.filter(row => row.page.includes(`/${selectedRegion}/`));
+    if (selectedRegion === "all") return csvData;
+    return csvData.filter((row) => {
+      if (Array.isArray(row.regions) && row.regions.length) {
+        return row.regions.includes(selectedRegion);
+      }
+      if (row.regionCode) return row.regionCode === selectedRegion;
+      return row.page.toLowerCase().includes(`/${selectedRegion}/`);
+    });
   }, [csvData, selectedRegion]);
 
   // Generate TSV data for copying (based on filtered data)
@@ -435,8 +417,8 @@ export default function CustomPage() {
             REPOSTLENS
           </Link>
           <div className="flex gap-[var(--space-md)]">
-            <Link 
-              href="/" 
+            <Link
+              href="/"
               className="text-[var(--gray-4)] hover:text-[var(--accent-primary)] transition-colors font-bold text-[var(--text-sm)] uppercase"
             >
               Search Console
@@ -520,14 +502,14 @@ export default function CustomPage() {
                   {filteredData.length} of {csvData.length} pages with optimization potential
                 </p>
               </div>
-              <CopyButton 
+              <CopyButton
                 data={tsvData}
                 label="Copy TSV"
               />
             </div>
 
             {/* Region Filter */}
-            <RegionFilter 
+            <RegionFilter
               data={csvData}
               selectedRegion={selectedRegion}
               onRegionChange={setSelectedRegion}

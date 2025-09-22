@@ -1,38 +1,50 @@
 "use client";
 
 interface RegionFilterProps {
-  data: Array<{ page: string }>;
+  data: Array<{ page: string; regionCode?: string | null; regions?: string[] | null }>;
   selectedRegion: string;
   onRegionChange: (region: string) => void;
 }
 
 export function RegionFilter({ data, selectedRegion, onRegionChange }: RegionFilterProps) {
   // Extract available regions from data
+  const regionFromUrl = (url: string): string | null => {
+    const lower = url.toLowerCase();
+    if (lower.includes("/hk/")) return "hk";
+    if (lower.includes("/tw/")) return "tw";
+    if (lower.includes("/sg/")) return "sg";
+    if (lower.includes("/my/")) return "my";
+    if (lower.includes("/cn/")) return "cn";
+    return null;
+  };
+
   const availableRegions = Array.from(
     new Set(
-      data
-        .map(row => {
-          const url = row.page;
-          if (url.includes("/hk/")) return "hk";
-          if (url.includes("/tw/")) return "tw";
-          if (url.includes("/sg/")) return "sg";
-          if (url.includes("/my/")) return "my";
-          if (url.includes("/cn/")) return "cn";
-          return null;
-        })
-        .filter(Boolean) as Array<"hk" | "tw" | "sg" | "my" | "cn">
+      data.flatMap((row) => {
+        if (Array.isArray(row.regions) && row.regions.length) return row.regions;
+        const codes: string[] = [];
+        if (row.regionCode) codes.push(row.regionCode);
+        const fallback = regionFromUrl(row.page);
+        if (fallback) codes.push(fallback);
+        return codes;
+      })
     )
   ).sort();
 
   // Don't render if no regions or only one region
   if (availableRegions.length <= 1) return null;
 
-  const regionNames = {
+  const regionNames: Record<string, string> = {
     hk: "香港",
-    tw: "台灣", 
+    tw: "台灣",
     sg: "新加坡",
     my: "馬來西亞",
-    cn: "中國"
+    cn: "中國",
+    us: "美國",
+    jp: "日本",
+    th: "泰國",
+    ca: "加拿大",
+    kr: "韓國"
   };
 
   return (

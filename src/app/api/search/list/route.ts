@@ -35,45 +35,51 @@ export async function POST(req: Request) {
 
 function buildSqlForList(siteToken: string) {
   // Keep {site} placeholder for upstream substitution; do not inline siteToken here
-  return `-- This SQL query has been modified to show rank distribution for both current and previous periods.
+  return `-- This SQL query has been modified to show rank distribution for both current and previous periods (MoM).
 
 -- Date settings
 WITH date_settings AS (
     SELECT 
-        CURRENT_DATE - INTERVAL '7 days' as current_period_start,
+        CURRENT_DATE - INTERVAL '30 days' as current_period_start,
         CURRENT_DATE as current_period_end,
-        CURRENT_DATE - INTERVAL '14 days' as previous_period_start,
-        CURRENT_DATE - INTERVAL '7 days' as previous_period_end,
-        CURRENT_DATE - INTERVAL '14 days' as total_period_start
+        CURRENT_DATE - INTERVAL '60 days' as previous_period_start,
+        CURRENT_DATE - INTERVAL '30 days' as previous_period_end,
+        CURRENT_DATE - INTERVAL '60 days' as total_period_start
 ),
 
 -- Step 1: Base data preparation (single scan)
 base_data AS (
     SELECT 
-        page,
-        REPLACE(query, ' ', '') as query,
-        clicks,
-        impressions,
-        position,
-        date::DATE as date,
+        sh.page,
+        REPLACE(sh.query, ' ', '') as query,
+        sh.clicks,
+        sh.impressions,
+        sh.position,
+        sh.date::DATE as date,
         CASE 
-            WHEN date::DATE >= (SELECT current_period_start FROM date_settings) THEN 1 -- Current Period
-            WHEN date::DATE >= (SELECT previous_period_start FROM date_settings) THEN 2 -- Previous Period
+            WHEN sh.date::DATE >= (SELECT current_period_start FROM date_settings) THEN 1 -- Current Period
+            WHEN sh.date::DATE >= (SELECT previous_period_start FROM date_settings) THEN 2 -- Previous Period
             ELSE 0
         END as period_flag
-    FROM {site_hourly}
+    FROM {site_hourly} sh
     CROSS JOIN date_settings ds
-    WHERE date::DATE >= ds.total_period_start
-        AND date::DATE < ds.current_period_end
-        AND page NOT LIKE '%#%'
-        AND page IN (
-            SELECT page 
-            FROM {site_hourly}
+    WHERE sh.date::DATE >= ds.total_period_start
+        AND sh.date::DATE < ds.current_period_end
+        AND sh.page NOT LIKE '%#%'
+        AND EXISTS (
+            SELECT 1
+            FROM {site_hourly} history
+            WHERE history.page = sh.page
+              AND history.date::DATE < ds.total_period_start
+        )
+        AND sh.page IN (
+            SELECT sh2.page 
+            FROM {site_hourly} sh2
             CROSS JOIN date_settings ds2
-            WHERE date::DATE >= ds2.total_period_start
-              AND page NOT LIKE '%#%'
-            GROUP BY page
-            HAVING SUM(clicks) > 50
+            WHERE sh2.date::DATE >= ds2.total_period_start
+              AND sh2.page NOT LIKE '%#%'
+            GROUP BY sh2.page
+            HAVING SUM(sh2.clicks) > 50
         )
 ),
 

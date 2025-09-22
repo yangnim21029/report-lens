@@ -3,6 +3,7 @@ import { OpenAI } from "openai";
 import { convert } from "html-to-text";
 import { env } from "~/env";
 import { fetchKeywordCoverage, buildCoveragePromptParts } from "~/utils/keyword-coverage";
+import type { CoverageItem } from "~/utils/keyword-coverage";
 import { fetchContentExplorerForQueries } from "~/utils/search-traffic";
 
 const openai = new OpenAI({ apiKey: env.OPENAI_API_KEY });
@@ -48,9 +49,36 @@ export async function POST(req: Request) {
 
     // Step 3: Build prompt (aligned with legacy optimize_en_chatgpt)
     const bestQuery = input?.bestQuery ?? null;
+    const highRankArray = [input?.rank1, input?.rank2, input?.rank3]
+      .filter(Boolean)
+      .map((line: unknown) => String(line || ""));
+    let highRankLines = [...highRankArray];
+    let highRankDetails = highRankLines.map((line) => parseRankKeywordLine(line));
+
+    const prevRankArray = [
+      input?.prevRank1,
+      input?.prevRank2,
+      input?.prevRank3,
+      input?.prevRank4,
+      input?.prevRank5,
+      input?.prevRank6,
+      input?.prevRank7,
+      input?.prevRank8,
+      input?.prevRank9,
+      input?.prevRank10,
+      input?.prevRankGt10,
+    ]
+      .filter(Boolean)
+      .map((line: unknown) => String(line || ""));
+    let prevRankLines = [...prevRankArray];
+    let prevRankDetails = prevRankLines.map((line) => parseRankKeywordLine(line));
+
     const keywordsArray = [input?.rank4, input?.rank5, input?.rank6, input?.rank7, input?.rank8, input?.rank9, input?.rank10]
-      .filter(Boolean);
-    let keywordsList = keywordsArray.join("\n");
+      .filter(Boolean)
+      .map((line: unknown) => String(line || ""));
+    let keywordLines = [...keywordsArray];
+    let keywordsList = keywordLines.join("\n");
+    let rankKeywordDetails = keywordLines.map((line) => parseRankKeywordLine(line));
 
     const region = page.includes("holidaysmart.io") ? (page.match(/\/(hk|tw|sg|my|cn)\//i)?.[1]?.toLowerCase() || "hk") : "hk";
     const locale = {
@@ -64,6 +92,20 @@ export async function POST(req: Request) {
 
     // Try to enrich with keyword coverage (SV + optional GSC) for this page
     let coverageBlock = "";
+    let coverageData: {
+      covered: CoverageItem[];
+      uncovered: CoverageItem[];
+      zeroSearchVolume: CoverageItem[];
+      searchVolumeMap: Record<string, number | null>;
+    } | null = null;
+    let contentExplorerSummary: {
+      table: string;
+      difficultyNotes: string[];
+      formatNotes: string[];
+      paaNotes: string[];
+      pickedQueries: string[];
+      insights: any[];
+    } | null = null;
     try {
       const coverage = await fetchKeywordCoverage(page);
       if (coverage.success) {
@@ -77,6 +119,14 @@ export async function POST(req: Request) {
           if (!item?.text) continue;
           svMap.set(norm(item.text), typeof item.searchVolume === "number" ? item.searchVolume : null);
         }
+        const zeroSv = [...(coverage.covered || []), ...(coverage.uncovered || [])]
+          .filter((item) => typeof item?.searchVolume === "number" && item.searchVolume === 0);
+        coverageData = {
+          covered: coverage.covered || [],
+          uncovered: coverage.uncovered || [],
+          zeroSearchVolume: zeroSv,
+          searchVolumeMap: Object.fromEntries(Array.from(svMap.entries())),
+        };
         const enrichWithSV = (raw: string): string => {
           const str = String(raw || "").trim();
           const name = str.includes("(") ? str.slice(0, str.indexOf("(")).trim() : str;
@@ -90,7 +140,17 @@ export async function POST(req: Request) {
           }
           return `${name} (${svPart})`;
         };
-        keywordsList = keywordsArray.map((line: string) => enrichWithSV(String(line))).join("\n");
+        keywordLines = keywordsArray.map((line: string) => enrichWithSV(String(line)));
+        keywordsList = keywordLines.join("\n");
+        rankKeywordDetails = keywordLines.map((line) => parseRankKeywordLine(line));
+        if (highRankLines.length > 0) {
+          highRankLines = highRankLines.map((line: string) => enrichWithSV(String(line)));
+          highRankDetails = highRankLines.map((line) => parseRankKeywordLine(line));
+        }
+        if (prevRankLines.length > 0) {
+          prevRankLines = prevRankLines.map((line: string) => enrichWithSV(String(line)));
+          prevRankDetails = prevRankLines.map((line) => parseRankKeywordLine(line));
+        }
       }
     } catch (_) {
       // ignore coverage enrichment failures to avoid blocking core analysis
@@ -140,6 +200,45 @@ export async function POST(req: Request) {
 
       if (topQueries.length > 0) {
         const explorer = await fetchContentExplorerForQueries(topQueries);
+        const difficultyNotes: string[] = [];
+        const formatNotes: string[] = [];
+        const paaNotes: string[] = [];
+        const summarizeDomain = (page: any) => {
+          if (!page) return "N/A";
+          const domain = page.domain || page.url || "N/A";
+          const da = typeof page.domainAuthority === "number" && isFinite(page.domainAuthority)
+            ? `DA ${Math.round(page.domainAuthority)}`
+            : null;
+          const traffic = typeof page.pageTraffic === "number" && isFinite(page.pageTraffic)
+            ? `Traffic ${Math.round(page.pageTraffic)}`
+            : null;
+          const backlinks = typeof page.backlinks === "number" && isFinite(page.backlinks)
+            ? `BL ${Math.round(page.backlinks)}`
+            : null;
+          const keywords = typeof page.pageKeywords === "number" && isFinite(page.pageKeywords)
+            ? `KW ${Math.round(page.pageKeywords)}`
+            : null;
+          const metrics = [traffic, da, backlinks, keywords].filter(Boolean).join(", ");
+          return metrics ? `${domain} (${metrics})` : `${domain}`;
+        };
+        const summarizeTopPage = (page: any, index: number) => {
+          if (!page) return `${index + 1}. N/A`;
+          const title = page.title && String(page.title).trim() ? String(page.title).trim() : summarizeDomain(page);
+          const url = page.url || page.domain || "N/A";
+          const metrics: string[] = [];
+          if (typeof page.pageTraffic === "number" && isFinite(page.pageTraffic)) metrics.push(`Traffic ${Math.round(page.pageTraffic)}`);
+          if (typeof page.domainAuthority === "number" && isFinite(page.domainAuthority)) metrics.push(`DA ${Math.round(page.domainAuthority)}`);
+          if (typeof page.backlinks === "number" && isFinite(page.backlinks)) metrics.push(`BL ${Math.round(page.backlinks)}`);
+          if (typeof page.pageKeywords === "number" && isFinite(page.pageKeywords)) metrics.push(`KW ${Math.round(page.pageKeywords)}`);
+          const desc = page.description && String(page.description).trim() ? String(page.description).trim() : null;
+          const lines = [
+            `${index + 1}. ${title}`,
+            `   URL: ${url}`,
+            metrics.length ? `   Metrics: ${metrics.join(", ")}` : null,
+            desc ? `   Description: ${desc}` : null,
+          ].filter(Boolean);
+          return lines.join("\n");
+        };
         // Build summary table per query
         const rowFor = (q: string) => {
           const ins = (explorer.insights || []).find((i: any) => normalize(i.query) === normalize(q));
@@ -153,11 +252,43 @@ export async function POST(req: Request) {
           const avgBl = avg(nums(withTraffic, (p) => typeof p.backlinks === "number" ? p.backlinks : null));
           const posArr = byKey[normalize(q)]?.positions || [];
           const avgPos = posArr.length ? (posArr.reduce((a, b) => a + b, 0) / posArr.length) : null;
-          const drStr = isFinite(lowestDr) ? String(lowestDr) : "-";
+          const lowestDrValue = Number.isFinite(lowestDr) ? Math.round(lowestDr) : null;
+          const avgBlValue = typeof avgBl === "number" && isFinite(avgBl) ? avgBl : null;
+          const drStr = lowestDrValue === null ? "-" : String(lowestDrValue);
           const tStr = avgTraffic === null ? "-" : String(Math.round(avgTraffic));
           const kwStr = avgKw === null ? "-" : String(Math.round(avgKw));
           const posStr = avgPos === null ? "-" : (avgPos as number).toFixed(1);
-          const blStr = avgBl === null ? "-" : String(Math.round(avgBl));
+          const blStr = avgBlValue === null ? "-" : String(Math.round(avgBlValue));
+
+          if (ins) {
+            const difficultyLabel = lowestDrValue !== null && avgBlValue !== null
+              ? (lowestDrValue > 50 && avgBlValue > 10 ? "High competition" : "Manageable competition")
+              : "Competition unknown";
+            const lowestDrText = lowestDrValue === null ? "N/A" : String(lowestDrValue);
+            const avgBlText = avgBlValue === null ? "N/A" : String(Math.round(avgBlValue));
+            difficultyNotes.push(`- ${q}: ${difficultyLabel} — lowest DR ${lowestDrText}, avg BL ${avgBlText}`);
+
+            const domainSource = pages as any[];
+            const sortedDomains = [...domainSource]
+              .sort((a, b) => {
+                const aTraffic = typeof a.pageTraffic === "number" && isFinite(a.pageTraffic) ? a.pageTraffic : 0;
+                const bTraffic = typeof b.pageTraffic === "number" && isFinite(b.pageTraffic) ? b.pageTraffic : 0;
+                return bTraffic - aTraffic;
+              })
+              .slice(0, 10);
+            const domainList = sortedDomains
+              .map((page, idx) => summarizeTopPage(page, idx))
+              .join("\n");
+            formatNotes.push(`- ${q}: Top pages by traffic\n${domainList ? domainList.split("\n").map((line) => `  ${line}`).join("\n") : "  No pages with measurable traffic"}`);
+
+            const paaItems = (ins.paa || [])
+              .map((p: any) => String(p?.question || ""))
+              .filter((question) => Boolean(question))
+              .slice(0, 5);
+            if (paaItems.length > 0) {
+              paaNotes.push(`- ${q}: ${paaItems.join(" | ")}`);
+            }
+          }
           return `| ${q} | ${drStr} | ${tStr} | ${kwStr} | ${posStr} | ${blStr} |`;
         };
         const table = [
@@ -165,7 +296,24 @@ export async function POST(req: Request) {
           "|-------|-----------|------------:|-------:|---------:|-------:|",
           ...topQueries.map((q) => rowFor(q)),
         ].join("\n");
-        contentExplorerBlock = `\n\n# Content Explorer Data (Top-3 by Impressions)\n${table}\n`;
+        const difficultySection = difficultyNotes.length
+          ? `\n- Competition Difficulty (use lowest DR > 50 and avg BL > 10 to flag harder SERPs):\n${difficultyNotes.map((line) => `  ${line}`).join("\n")}`
+          : "";
+        const formatSection = formatNotes.length
+          ? `\n- Domain Landscape Data (for AI assessment):\n${formatNotes.map((line) => `  ${line}`).join("\n")}`
+          : "";
+        const paaSection = paaNotes.length
+          ? `\n- People Also Ask Opportunities:\n${paaNotes.map((line) => `  ${line}`).join("\n")}`
+          : "";
+        contentExplorerBlock = `\n\n# Content Explorer Data (Top-3 by Impressions)\n${table}${difficultySection}${formatSection}${paaSection}\n`;
+        contentExplorerSummary = {
+          table,
+          difficultyNotes: [...difficultyNotes],
+          formatNotes: [...formatNotes],
+          paaNotes: [...paaNotes],
+          pickedQueries: explorer.pickedQueries || topQueries,
+          insights: explorer.insights || [],
+        };
       }
     } catch (_) {
       // ignore explorer errors
@@ -210,7 +358,11 @@ If a user searching the Best Query receives content for the suggested keyword, w
         : "N/A"
       }
 - Has changed: ${input.prevBestQuery && input.bestQuery !== input.prevBestQuery}
-Keyword list (Rank 4-10):
+- High-performing keywords (Rank 1-3, currently ranking well):
+${highRankLines.length > 0 ? highRankLines.join("\n") : "N/A"}
+- Previous ranking keywords snapshot:
+${prevRankLines.length > 0 ? prevRankLines.join("\n") : "N/A"}
+- Keyword list (Rank 4-10):
 ${keywordsList}
 ## Data Format Explanation
 - Each keyword format: keyword (rank: X, clicks: Y)
@@ -221,6 +373,9 @@ ${keywordsList}
 - Best Query change indicates attack failure/success; check new keyword scale (short/long tail)
 - Article excerpt:
 ${textContent.substring(0, 4000)}
+
+# Notice
+alias may be input error, should ignore user input error.
 
 # Reasoning Steps
 - 1: Dissect Best Query for user intent
@@ -288,6 +443,9 @@ Follow the exact section, table, and formatting guidance for consistency with au
 ${coverageBlock}${contentExplorerBlock}`;
 
 
+    console.log("\n===== RepostLens Analyze Prompt =====\n" + prompt + "\n===== End Analyze Prompt =====\n");
+
+
     // Step 4: Call OpenAI
     const completion = await openai.chat.completions.create({
       model: "gpt-5-mini-2025-08-07", // most advanced model available
@@ -314,7 +472,25 @@ ${coverageBlock}${contentExplorerBlock}`;
     const sections = splitSections(analysis);
     const keywordsAnalyzed = keywordsArray.length;
 
-    return NextResponse.json({ success: true, analysis, sections, keywordsAnalyzed }, { status: 200 });
+    return NextResponse.json({
+      success: true,
+      analysis,
+      sections,
+      keywordsAnalyzed,
+      topRankKeywords: highRankDetails,
+      rankKeywords: rankKeywordDetails,
+      previousRankKeywords: prevRankDetails,
+      zeroSearchVolumeKeywords: {
+        rank: rankKeywordDetails.filter((item) => item.searchVolume === 0),
+        coverage: coverageData?.zeroSearchVolume || [],
+      },
+      contentExplorer: contentExplorerSummary,
+      keywordCoverage: coverageData,
+      promptBlocks: {
+        keywordCoverage: coverageBlock || null,
+        contentExplorer: contentExplorerBlock || null,
+      },
+    }, { status: 200 });
   } catch (err: unknown) {
     return NextResponse.json({ success: false, error: err instanceof Error ? err.message : "Unexpected error" }, { status: 500 });
   }
@@ -331,6 +507,30 @@ function toPlainText(html: string) {
     .replace(/&amp;/g, "&")
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">");
+}
+
+function parseRankKeywordLine(line: string) {
+  const raw = String(line || "").trim();
+  const keyword = raw.includes("(") ? raw.slice(0, raw.indexOf("(")).trim() : raw;
+  const matchNumber = (regex: RegExp): number | null => {
+    const m = raw.match(regex);
+    if (!m) return null;
+    const numeric = Number((m[1] || "").replace(/,/g, ""));
+    return Number.isFinite(numeric) ? numeric : null;
+  };
+  const rank = matchNumber(/rank\s*:\s*([0-9]+(?:\.[0-9]+)?)/i);
+  const clicks = matchNumber(/clicks?\s*:\s*([0-9]+(?:\.[0-9]+)?)/i);
+  const impressions = matchNumber(/impressions?\s*:\s*([0-9]+(?:\.[0-9]+)?)/i) ?? matchNumber(/imps?\s*:\s*([0-9]+(?:\.[0-9]+)?)/i);
+  const searchVolume = matchNumber(/SV\s*:\s*([0-9]+(?:\.[0-9]+)?)/i) ?? matchNumber(/search\s*volume\s*:\s*([0-9]+(?:\.[0-9]+)?)/i);
+
+  return {
+    keyword,
+    rank,
+    clicks,
+    impressions,
+    searchVolume,
+    raw,
+  };
 }
 
 function splitSections(md: string) {
