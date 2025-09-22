@@ -41,5 +41,5 @@ export async function POST(req: Request) {
 
 function buildOutlinePrompt(analysisText: string) {
   const sanitized = analysisText.length > 8000 ? analysisText.slice(0, 8000) : analysisText;
-  return `${sanitized}\n------\n\n根據上述，給我一個 h2/h3 文章大綱\n\n格式如下：\n\nh2 xxx\nh3 xxx\n----\n以上是 prompt, 不要有任何其他建議，只需要輸出文章大綱`;
+  return `${sanitized}\n------\n\n根據上述，給我一個 h2/h3 文章大綱\n\n格式如下：\n\nh2 xxx\nh3 xxx\n----\n以上是 prompt, 不要有任何其他建議，只需要輸出文章大綱, do not include analysis suggest as h tag which is not article but a suggestion.`;
 }

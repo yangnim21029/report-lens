@@ -131,21 +131,23 @@ If you use headings (##, ###), ensure the language is simple enough for a high s
 
 ## Output Format
 Return all optimizations in "Only Markdown table" using the schema below:
-| Before Adjustment (string) | Modification Suggestion (includes clear SEO problem, rationale, actionable adjustment) | Keywords (comma-separated) |
-|:-------------------------|:-----------------------------------------------------------------------------------------|:--------------------------|
+| Before Adjustment (string) | Modification Suggestion |
+|:-------------------------|:-----------------------------------------------------------------------------------------|
 - **Before Adjustment**: An excerpt from the article needing improvement.
-- **Modification Suggestion**: Briefly describe the SEO concern, offer a specific, keyword-focused revision (no HTML). Conclude with hashtagged keywords.
-- **Keywords**: List of relevant keywords, comma-separated.
+- **Modification Suggestion**: Briefly describe the SEO concern, offer a specific, keyword-focused revision (no HTML). Conclude with hashtagged keywords. 
 
 Do not include other suggestion from analysis.
-
+Answer why problem now directly
+Give change example directly.
 Use <br> for newline to read in a cell.
 Do not use ** in cell.
+Do not change H1, Toc, meta tag
+Problem state should clear SEO problem, rationale in short for high school student to understand.
 
 **Example:**
-| Before Adjustment | Modification Suggestion | Keywords |
-|:---|:---|:---|
-| Switch Animal Crossing has been extremely popular since its launch. ... | Current Situation: The introduction lacks notable villager details. <br> Adjust as follows: <br> Among the SS-tier villagers, Raymond the cat stands out for his unique features and popularity in Animal Crossing communities. | AnimalCrossingVillagerGuide2025 |
+| Before Adjustment | Modification Suggestion |
+|:---|:---|
+| Switch Animal Crossing has been extremely popular since its launch. ... | Problem: The introduction lacks notable villager details. <br> Adjust as follows: <br> ...(example) |
 
 **Additional Output Requirements:**
 - Match regional language and article style.
