@@ -85,13 +85,14 @@ function toPlainText(html: string) {
 
 
 function buildContextVectorPrompt(analysisText: string, articleText: string) {
-  return `You are an expert SEO Content Strategist and Copywriter specializing in analyzing user intent and optimizing content for search engine performance. Your goal is to design a strategic content update that attracts targeted search traffic and fits seamlessly into existing articles.
-Begin with a concise checklist (3-7 bullets) outlining the main workflow steps before substantive work.
-**Task Overview**
+  return `You are an expert SEO Content Strategist and Copywriter specializing in analyzing user intent and optimizing content for search engine performance. 
+  Your goal is to design a seo content update that attracts targeted search traffic and fits seamlessly into existing articles.
+
+  **Task Overview**
+
 Input:
-- ${analysisText}: Analysis of the topic or user intent.
-- ${articleText}: The original article content.
-- Desired tone, core question, and a list of key data points.
+- ${analysisText}
+
 Objective:
 - Write a content block that concisely and authoritatively answers the core question, delivers high SEO impact within the opening sentences, and integrates with the current article.
 
@@ -126,15 +127,16 @@ Complete two to three targeted optimizations:
 ---
 **Original Article Content**
 ${articleText || "Article text not provided. Please supply 'articleText'} ."}
+
 ## NOTICE
 If you use headings (##, ###), ensure the language is simple enough for a high school student.
 
 ## Output Format
 Return all optimizations in "Only Markdown table" using the schema below:
-| Before Adjustment (string) | Modification Suggestion |
-|:-------------------------|:-----------------------------------------------------------------------------------------|
+| Before Adjustment (string) | After Adjustment |
+|:---|:---|
 - **Before Adjustment**: An excerpt from the article needing improvement.
-- **Modification Suggestion**: Briefly describe the SEO concern, offer a specific, keyword-focused revision (no HTML). Conclude with hashtagged keywords. 
+- **After Adjustment**: Briefly describe the SEO concern, offer a specific, keyword-focused revision (no HTML). Conclude with hashtagged keywords. 
 
 Do not include other suggestion from analysis.
 Answer why problem now directly
@@ -142,18 +144,20 @@ Give change example directly.
 Use <br> for newline to read in a cell.
 Do not use ** in cell.
 Do not change H1, Toc, meta tag
-Problem state should clear SEO problem, rationale in short for high school student to understand.
+SEO concern state should clear SEO problem, rationale in short for high school student to understand.
+
+After Adjustment should start from "SEO Concern:"
 
 **Example:**
-| Before Adjustment | Modification Suggestion |
+| Before Adjustment | After Adjustment |
 |:---|:---|
-| Switch Animal Crossing has been extremely popular since its launch. ... | Problem: The introduction lacks notable villager details. <br> Adjust as follows: <br> ...(example) |
+| Switch Animal Crossing has been extremely popular since its launch. ... | SEO Concern: The content do not response search intent. <br> Adjust as follows: <br> ...(example) |
+
 
 **Additional Output Requirements:**
 - Match regional language and article style.
 - Focus only on accurate, SEO-driven content enhancements; do not optimize for general readability or structure.
 - Do not change the table columns or structure.
-- Always ensure all required input fields (analysisText, articleText, tone, core question, key data points) are provided. If any are missing, return a clear error specifying the missing field(s).
 
 # Notice
 alias may be input error, should ignore user input error.
