@@ -54,7 +54,7 @@ page_first_seen AS (
     SELECT 
         page,
         MIN(date::DATE) as first_seen_date
-    FROM {site_hourly}
+    FROM {site}
     GROUP BY page
 ),
 
@@ -72,7 +72,7 @@ base_data AS (
             WHEN sh.date::DATE >= ds.previous_period_start THEN 2 -- Previous Period
             ELSE 0
         END as period_flag
-    FROM {site_hourly} sh
+    FROM {site} sh
     CROSS JOIN date_settings ds
     WHERE sh.date::DATE >= ds.total_period_start
         AND sh.date::DATE < ds.current_period_end
@@ -85,7 +85,7 @@ base_data AS (
         )
         AND sh.page IN (
             SELECT sh2.page 
-            FROM {site_hourly} sh2
+            FROM {site} sh2
             CROSS JOIN date_settings ds2
             WHERE sh2.date::DATE >= ds2.total_period_start
               AND sh2.page NOT LIKE '%#%'
