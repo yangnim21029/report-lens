@@ -8,9 +8,9 @@ const openai = new OpenAI({ apiKey: env.OPENAI_API_KEY });
 
 const ContextVectorSuggestionSchema = z.object({
   before: z.string().min(20),
-  whyProblemNow: z.string().min(1).max(40),
-  adjustAsFollows: z.string().min(1).max(40),
-  afterAdjust: z.string().min(40),
+  whyProblemNow: z.string().min(1).max(80),
+  adjustAsFollows: z.string().min(1),
+  afterAdjust: z.string().min(20).optional(),
 });
 
 const ContextVectorResponseSchema = z.object({
@@ -44,10 +44,10 @@ export async function POST(req: Request) {
       (typeof data?.text === "string" ? data.text : undefined) ||
       "";
 
-  const prompt = buildContextVectorPrompt(String(analysisText || ""), toPlainText(article).slice(0, 8000));
+    const prompt = buildContextVectorPrompt(String(analysisText || ""), toPlainText(article).slice(0, 8000));
 
     const response = await openai.responses.parse({
-      model: "ggpt-5-mini-2025-08-07",
+      model: "gpt-5-mini-2025-08-07",
       input: [
         { role: "system", content: "你是資深 SEO 策略師，輸出必須符合指定 JSON 結構。" },
         { role: "user", content: prompt },
@@ -55,9 +55,12 @@ export async function POST(req: Request) {
       text: {
         format: zodTextFormat(ContextVectorResponseSchema, "context_vector"),
       },
+    }).catch((err) => {
+      console.warn("[context-vector] parse error", err);
+      return null;
     });
 
-    const parsed = response.output_parsed;
+    const parsed = response?.output_parsed ?? { suggestions: [] };
     const suggestions = (parsed?.suggestions ?? []).map(normalizeSuggestion);
     const markdown = buildMarkdownTable(suggestions);
 
@@ -109,65 +112,45 @@ function toPlainText(html: string) {
 }
 
 function buildContextVectorPrompt(analysisText: string, articleText: string) {
-  return `Developer: ### Role and Objective
-Identify the two or three highest-impact content gaps in a given article and provide specific adjustments to address them.
+  return `## Role & Objective
+你是一位資深 SEO 策略師，需根據提供的分析與原文片段，找出最多三項關鍵內容缺口並給出可直接落地的調整。
 
-### Instructions
-- Analyze the provided reference analysis (Markdown) and the original article excerpt (plain text).
-- Clearly identify up to three content gaps with the greatest SEO impact, ordered by priority.
-- For each gap, explicitly state the SEO problem and recommend a precise adjustment.
-- If no adjustments are needed, return {"suggestions": []}.
-
-### Output Format
-Return a JSON object that strictly matches this schema:
+## 必須輸出的 JSON 結構
 {
   "suggestions": [
     {
-      "before": "原文片段，必須為原文內容且不少於 20 字",
-      "whyProblemNow": "明確說明 SEO 缺口，40 字以內，精簡陳述",
-      "adjustAsFollows": "建議的行動指令或修改建議，使用傳統中文，簡明扼要",
-      "afterAdjust": "調整後可直接放入文章的語句，不少於 20 字"
-    },
-    // 2 至 3 個建議，皆需符合上述規則
+      "before": "原文片段，至少 20 字",
+      "whyProblemNow": "40 字以內的 SEO 問題說明(seo concern)",
+      "adjustAsFollows": "說明調整方向／操作重點",
+      "afterAdjust": "完整可直接置換的更新內容，至少 20 字"
+    }
   ]
 }
-- suggestions 陣列必須依 SEO 影響排序（影響度高者優先），如影響相同則以發現順序排列。
-- 所有字串欄位必須使用繁體中文且為單行（如需換行則以 \n ）。請勿使用 Markdown 表格或 HTML 標記。
-- 若 analysisText 或 articleText 欄位缺失或為空，請回傳 {"error": "缺少必要輸入，無法執行分析。"}
+若無調整，回傳 {"suggestions": []}。
 
-### Don't do
-- 請勿修改 meta 標籤、快速瀏覽區塊或目錄。
-- 每條建議必須明確解釋 SEO 缺口及提出精準的調整方式。
+## 輸入資料
+- Reference analysis (Markdown)：${analysisText || ""}
+- Original article excerpt (純文字，已截斷 8000 字)：${articleText || ""}
 
-### Context
-- 輸入：
-  - Reference analysis (Markdown)：${analysisText || ""}
-  - Original article (plain text excerpt)：${articleText || ""}
-
-### Planning
-- 請於內部思考時，逐步檢查分析及原文內容，找出最大影響的缺口。
-- 驗證每條建議是否有充分理由及明確調整方案。
-
-### Post-action Validation
-- 在提出調整建議後，簡要驗證各項調整是否能實際提升內容的 SEO 影響力。
-- 若發現結果有疑慮，優先再精煉建議並重新確認。
-
-### Verbosity
-- 回傳內容應精煉明確，避免冗長解釋。
-
-### Stop Conditions
-- 當所有高影響 SEO 缺口及精準建議均已提出，或無需調整時結束。
+## 輸出守則
+- 只填入上述欄位，所有字串使用繁體中文，必要換行用 \\n 表示。
+- whyProblemNow 限 40 字內；afterAdjust 至少 20 字，必須是可直接放入文章的完整句子或段落。
+- 禁止加入 Markdown 表格或 HTML、禁止修改 meta、TOC、快速檢視區塊。
+- 建議依 SEO 影響度排序，高者優先。
 `;
 }
 
 function normalizeSuggestion(s: ContextVectorSuggestion) {
   const normalizeLabel = (label: string, value: string) =>
     value.startsWith(label) ? value : `${label}${value}`;
+  const after = s.afterAdjust && s.afterAdjust.trim().length >= 20
+    ? s.afterAdjust.trim()
+    : s.adjustAsFollows.trim();
   return {
     before: s.before.trim(),
     whyProblemNow: normalizeLabel('', s.whyProblemNow).trim(),
     adjustAsFollows: normalizeLabel('', s.adjustAsFollows).trim(),
-    afterAdjust: s.afterAdjust.trim(),
+    afterAdjust: after,
   } satisfies ContextVectorSuggestion;
 }
 
@@ -179,7 +162,8 @@ function buildMarkdownTable(suggestions: ContextVectorSuggestion[]): string {
   const divider = "|:---|:---|";
   const rows = suggestions.map((item) => {
     const left = escapePipes(item.before);
-    const right = escapePipes(`${item.whyProblemNow}\n${item.adjustAsFollows}\n${item.afterAdjust}`.trim());
+    const after = item.afterAdjust || item.adjustAsFollows;
+    const right = escapePipes(`${item.whyProblemNow}\n${item.adjustAsFollows}\n${after}`.trim());
     return `| ${left} | ${right} |`;
   });
   return [header, divider, ...rows].join("\n");
