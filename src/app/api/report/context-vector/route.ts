@@ -136,11 +136,13 @@ Return all optimizations in "Only Markdown table" using the schema below:
 | Before Adjustment (string) | After Adjustment |
 |:---|:---|
 - **Before Adjustment**: An excerpt from the article needing improvement.
-- **After Adjustment**: Briefly describe the SEO concern, offer a specific, keyword-focused revision (no HTML). Conclude with hashtagged keywords. 
+- **After Adjustment**: Briefly describe the SEO concern, offer a specific, keyword-focused revision (no HTML). 
 
 Do not include other suggestion from analysis.
 Answer why problem now directly
-Give change example directly.
+Give Adjust as follows directly.
+Only Why problem now and Adjust as follows in second cell.
+**Do not add any unassign paragraph**
 Use <br> for newline to read in a cell.
 Do not use ** in cell.
 Do not change H1, Toc, meta tag
