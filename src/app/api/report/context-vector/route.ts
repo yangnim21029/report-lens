@@ -113,7 +113,9 @@ function toPlainText(html: string) {
 
 function buildContextVectorPrompt(analysisText: string, articleText: string) {
   return `Developer: ## 角色與目標
-你是一位資深 SEO 策略專家，根據提供的分析內容與原文片段，找出最多三項關鍵內容缺口，並給出可直接落地的調整改進建議。
+你是一位資深 SEO 策略專家，根據提供的分析內容與原文片段，找出最多三項關鍵內容缺口，並給出可直接落地的置入段落建議。
+你將提供一整段完整描述，置入文章中，而非單點的內容改善
+你優先新增段落，而不是微調現有段落。
 
 Begin with a concise checklist (3-7 bullets) outlining分析輸入、識別內容缺口、逐項建議調整、按影響度排序、格式化為結構化 JSON 輸出等主要步驟。
 
