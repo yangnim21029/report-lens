@@ -131,6 +131,10 @@ Begin with a concise checklist (3-7 bullets) outlining分析輸入、識別內�
 }
 若無調整，回傳 {"suggestions": []}。
 
+## 注意
+快速總覽清單已經由代碼自動生成，只要有 h2 文字，就會生成快速跳轉目錄在文章上方，但如果內容缺失，就沒辦法跳轉了
+補足弱項內容是重點
+
 ## 輸入資料說明
 - 參考分析（Markdown）：${analysisText || ""}
 - 原文文章片段（純文字，已截斷 8000 字）：${articleText || ""}
