@@ -112,31 +112,47 @@ function toPlainText(html: string) {
 }
 
 function buildContextVectorPrompt(analysisText: string, articleText: string) {
-  return `## Role & Objective
-你是一位資深 SEO 策略師，需根據提供的分析與原文片段，找出最多三項關鍵內容缺口並給出可直接落地的調整。
+  return `Developer: ## 角色與目標
+你是一位資深 SEO 策略專家，根據提供的分析內容與原文片段，找出最多三項關鍵內容缺口，並給出可直接落地的調整改進建議。
+
+Begin with a concise checklist (3-7 bullets) outlining分析輸入、識別內容缺口、逐項建議調整、按影響度排序、格式化為結構化 JSON 輸出等主要步驟。
 
 ## 必須輸出的 JSON 結構
 {
   "suggestions": [
     {
       "before": "原文片段，至少 20 字",
-      "whyProblemNow": "40 字以內的 SEO 問題說明(seo concern)",
+      "whyProblemNow": "40 字以內的 SEO 問題說明",
       "adjustAsFollows": "說明調整方向／操作重點",
-      "afterAdjust": "完整可直接置換的更新內容，至少 20 字"
-    }
+      "afterAdjust": "完整可直接替換的新內容，至少 20 字"
+    },
+    ...(最多 3 筆)
   ]
 }
 若無調整，回傳 {"suggestions": []}。
 
-## 輸入資料
-- Reference analysis (Markdown)：${analysisText || ""}
-- Original article excerpt (純文字，已截斷 8000 字)：${articleText || ""}
+## 輸入資料說明
+- 參考分析（Markdown）：${analysisText || ""}
+- 原文文章片段（純文字，已截斷 8000 字）：${articleText || ""}
 
 ## 輸出守則
-- 只填入上述欄位，所有字串使用繁體中文，必要換行用 \\n 表示。
-- whyProblemNow 限 40 字內；afterAdjust 至少 20 字，必須是可直接放入文章的完整句子或段落。
+- 僅填上述欄位，所有字串使用繁體中文，必要換行以 \\ 表示。
+- whyProblemNow 限 40 字以內；afterAdjust 至少 20 字且必須為可直接放入文章的完整句子或段落。
 - 禁止加入 Markdown 表格或 HTML、禁止修改 meta、TOC、快速檢視區塊。
-- 建議依 SEO 影響度排序，高者優先。
+- 建議依 SEO 影響度排序，較嚴重者優先。
+- 用字簡潔清晰，字詞概念不重複，高中生程度以下的閱讀難度
+
+After each suggestion list is built, quickly驗證其結構、內容完整度與各欄位長度是否符合規則，若不符則自動修正或剔除不合格項目再輸出。
+
+## Output 格式
+- 回傳一個 JSON 物件，包括 "suggestions" 陣列，陣列內每一筆建議物件最多 3 筆（0～3 筆，若無調整則為空陣列）。
+- 每筆建議物件需包含：
+  - "before"(string)：對應原文片段，必須至少 20 字。
+  - "whyProblemNow"(string)：摘要現有 SEO 問題，最多 40 字。
+  - "adjustAsFollows"(string)：簡述調整方向或重點。
+  - "afterAdjust"(string)：建議完整替換片段，必須至少 20 字，內容可直接放入原文且無語法錯誤。
+- 當 analysisText 或 articleText 任一輸入為空，視同無可調整，回傳 {"suggestions": []}。
+- 若內容長度未達最低要求（before/afterAdjust 至少 20 字），可略過該片段，不產生對應建議，亦不需報錯。
 `;
 }
 
