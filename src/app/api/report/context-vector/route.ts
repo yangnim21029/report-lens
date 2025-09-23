@@ -136,7 +136,7 @@ Return all optimizations in "Only Markdown table" using the schema below:
 | Before Adjustment (string) | After Adjustment |
 |:---|:---|
 - **Before Adjustment**: An excerpt from the article needing improvement.
-- **After Adjustment**: Briefly describe the SEO concern, offer a specific, keyword-focused revision (no HTML). 
+- **After Adjustment**: Briefly describe the Why problem now, offer a specific, keyword-focused revision (no HTML). 
 
 Do not include other suggestion from analysis.
 Answer why problem now directly
@@ -146,14 +146,14 @@ Only Why problem now and Adjust as follows in second cell.
 Use <br> for newline to read in a cell.
 Do not use ** in cell.
 Do not change H1, Toc, meta tag
-SEO concern state should clear SEO problem, rationale in short for high school student to understand.
+Why problem now state should clear SEO problem, rationale in short for high school student to understand.
 
-After Adjustment should start from "SEO Concern:"
+After Adjustment should start from "Why problem now:"
 
 **Example:**
 | Before Adjustment | After Adjustment |
 |:---|:---|
-| Switch Animal Crossing has been extremely popular since its launch. ... | SEO Concern: The content do not response search intent. <br> Adjust as follows: <br> ...(example) |
+| Switch Animal Crossing has been extremely popular since its launch. ... | Why problem now: The content do not response search intent. <br> Adjust as follows: <br> ...(example) |
 
 
 **Additional Output Requirements:**
