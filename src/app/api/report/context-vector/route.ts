@@ -6,14 +6,11 @@ import { env } from "~/env";
 
 const openai = new OpenAI({ apiKey: env.OPENAI_API_KEY });
 
-const placementEnum = z.enum(["before", "after", "replace"]);
-
 const ContextVectorSuggestionSchema = z.object({
-  before: z.string().min(1),
-  whyProblemNow: z.string().min(1),
+  before: z.string().min(20),
+  whyProblemNow: z.string().min(1).max(40),
   adjustAsFollows: z.string().min(1),
-  placement: placementEnum,
-  anchor: z.string().optional().nullable(),
+  afterAdjust: z.string().min(20),
 });
 
 const ContextVectorResponseSchema = z.object({
@@ -47,7 +44,7 @@ export async function POST(req: Request) {
       (typeof data?.text === "string" ? data.text : undefined) ||
       "";
 
-    const prompt = buildContextVectorPrompt(String(analysisText || ""), toPlainText(article).slice(0, 8000));
+  const prompt = buildContextVectorPrompt(String(analysisText || ""), toPlainText(article).slice(0, 8000));
 
     const response = await openai.responses.parse({
       model: "gpt-4.1-mini",
@@ -120,7 +117,12 @@ function buildContextVectorPrompt(analysisText: string, articleText: string) {
 Identify the two or three highest impact content gaps and propose adjustments.
 
 ## Output format (MUST FOLLOW)
-Return JSON matching the provided schema. Use Traditional Chinese for textual fields; placement must be one of before/after/replace. If no adjustments are needed, return {"suggestions": []}.
+Return JSON matching the provided schema. Use Traditional Chinese for textual fields. Each suggestion must include:
+- before: 原文片段 (>= 20 chars)
+- whyProblemNow: 明確說明 SEO 缺口，40 字以內
+- adjustAsFollows: 描述建議的行動指令（文字即可）
+- afterAdjust: 調整後可直接放入文章的語句 (>= 20 chars)
+If no adjustments are needed, return {"suggestions": []}.
 
 ## Guardrails
 - Do not modify meta tags, fast-view blocks, or the table of contents.
@@ -130,14 +132,13 @@ Return JSON matching the provided schema. Use Traditional Chinese for textual fi
 }
 
 function normalizeSuggestion(s: ContextVectorSuggestion) {
-  const why = s.whyProblemNow.startsWith("Why problem now:") ? s.whyProblemNow : `Why problem now: ${s.whyProblemNow}`;
-  const adjust = s.adjustAsFollows.startsWith("Adjust as follows:") ? s.adjustAsFollows : `Adjust as follows: ${s.adjustAsFollows}`;
+  const normalizeLabel = (label: string, value: string) =>
+    value.startsWith(label) ? value : `${label}${value}`;
   return {
     before: s.before.trim(),
-    whyProblemNow: why.trim(),
-    adjustAsFollows: adjust.trim(),
-    placement: s.placement,
-    anchor: s.anchor ?? null,
+    whyProblemNow: normalizeLabel('Why problem now: ', s.whyProblemNow).trim(),
+    adjustAsFollows: normalizeLabel('Adjust as follows: ', s.adjustAsFollows).trim(),
+    afterAdjust: s.afterAdjust.trim(),
   } satisfies ContextVectorSuggestion;
 }
 
@@ -149,7 +150,7 @@ function buildMarkdownTable(suggestions: ContextVectorSuggestion[]): string {
   const divider = "|:---|:---|";
   const rows = suggestions.map((item) => {
     const left = escapePipes(item.before);
-    const right = escapePipes(`${item.whyProblemNow}\n${item.adjustAsFollows}`.trim());
+    const right = escapePipes(`${item.whyProblemNow}\n${item.adjustAsFollows}\n${item.afterAdjust}`.trim());
     return `| ${left} | ${right} |`;
   });
   return [header, divider, ...rows].join("\n");
