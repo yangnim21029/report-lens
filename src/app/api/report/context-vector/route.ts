@@ -10,7 +10,7 @@ const ContextVectorSuggestionSchema = z.object({
   before: z.string().min(20),
   whyProblemNow: z.string().min(1).max(80),
   adjustAsFollows: z.string().min(1),
-  afterAdjust: z.string().min(20).optional(),
+  afterAdjust: z.union([z.string().min(20), z.null()]).optional().default(null),
 });
 
 const ContextVectorResponseSchema = z.object({
@@ -143,8 +143,9 @@ function buildContextVectorPrompt(analysisText: string, articleText: string) {
 function normalizeSuggestion(s: ContextVectorSuggestion) {
   const normalizeLabel = (label: string, value: string) =>
     value.startsWith(label) ? value : `${label}${value}`;
-  const after = s.afterAdjust && s.afterAdjust.trim().length >= 20
-    ? s.afterAdjust.trim()
+  const rawAfter = typeof s.afterAdjust === 'string' ? s.afterAdjust : null;
+  const after = rawAfter && rawAfter.trim().length >= 20
+    ? rawAfter.trim()
     : s.adjustAsFollows.trim();
   return {
     before: s.before.trim(),
