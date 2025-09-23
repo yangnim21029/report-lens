@@ -36,6 +36,7 @@ export async function POST(req: Request) {
 function buildSqlForList(siteToken: string) {
   // Keep {site} placeholder for upstream substitution; do not inline siteToken here
   return `-- This SQL query has been modified to show rank distribution for both current and previous periods (MoM).
+-- It now filters for pages first seen at least 4 months ago AND displays the first seen date.
 
 -- Date settings
 WITH date_settings AS (
@@ -44,10 +45,20 @@ WITH date_settings AS (
         CURRENT_DATE as current_period_end,
         CURRENT_DATE - INTERVAL '60 days' as previous_period_start,
         CURRENT_DATE - INTERVAL '30 days' as previous_period_end,
-        CURRENT_DATE - INTERVAL '60 days' as total_period_start
+        CURRENT_DATE - INTERVAL '60 days' as total_period_start,
+        CURRENT_DATE - INTERVAL '4 months' as first_seen_threshold
 ),
 
--- Step 1: Base data preparation (single scan)
+-- NEW STEP: Calculate the first seen date for every page. This will be used for filtering and for the final output.
+page_first_seen AS (
+    SELECT 
+        page,
+        MIN(date::DATE) as first_seen_date
+    FROM {site_hourly}
+    GROUP BY page
+),
+
+-- Step 1: Base data preparation (single scan) -- MODIFIED
 base_data AS (
     SELECT 
         sh.page,
@@ -57,8 +68,8 @@ base_data AS (
         sh.position,
         sh.date::DATE as date,
         CASE 
-            WHEN sh.date::DATE >= (SELECT current_period_start FROM date_settings) THEN 1 -- Current Period
-            WHEN sh.date::DATE >= (SELECT previous_period_start FROM date_settings) THEN 2 -- Previous Period
+            WHEN sh.date::DATE >= ds.current_period_start THEN 1 -- Current Period
+            WHEN sh.date::DATE >= ds.previous_period_start THEN 2 -- Previous Period
             ELSE 0
         END as period_flag
     FROM {site_hourly} sh
@@ -66,11 +77,11 @@ base_data AS (
     WHERE sh.date::DATE >= ds.total_period_start
         AND sh.date::DATE < ds.current_period_end
         AND sh.page NOT LIKE '%#%'
-        AND EXISTS (
-            SELECT 1
-            FROM {site_hourly} history
-            WHERE history.page = sh.page
-              AND history.date::DATE < ds.total_period_start
+        -- MODIFIED: Filter pages using the pre-calculated first_seen_date to keep the query efficient.
+        AND sh.page IN (
+            SELECT page 
+            FROM page_first_seen 
+            WHERE first_seen_date <= ds.first_seen_threshold
         )
         AND sh.page IN (
             SELECT sh2.page 
@@ -83,7 +94,7 @@ base_data AS (
         )
 ),
 
--- Step 2: Aggregated data -- MODIFIED to include period-specific ranks
+-- Step 2: Aggregated data (No changes here)
 aggregated_data AS (
     SELECT 
         page,
@@ -100,7 +111,7 @@ aggregated_data AS (
         SUM(impressions) FILTER (WHERE period_flag = 2) as previous_impressions,
         AVG(position) FILTER (WHERE period_flag = 2) as previous_avg_position,
 
-        -- MODIFIED: Create rank buckets for each period
+        -- Create rank buckets for each period
         CASE 
             WHEN AVG(position) FILTER (WHERE period_flag = 1) BETWEEN 1 AND 10 THEN FLOOR(AVG(position) FILTER (WHERE period_flag = 1))::INT
             WHEN AVG(position) FILTER (WHERE period_flag = 1) > 10 THEN 11
@@ -117,7 +128,7 @@ aggregated_data AS (
     GROUP BY page, query
 ),
 
--- Step 3: Page statistics -- MODIFIED for period-specific counts
+-- Step 3: Page statistics (No changes here)
 page_stats AS (
     SELECT 
         page,
@@ -125,11 +136,9 @@ page_stats AS (
         SUM(total_impressions) as page_total_impressions,
         COUNT(DISTINCT query) as total_keywords,
         
-        -- Current period keyword counts
         COUNT(DISTINCT query) FILTER (WHERE current_rank_bucket BETWEEN 1 AND 10 AND COALESCE(recent_clicks, 0) > 0) as current_keywords_1to10_count,
         COUNT(DISTINCT query) FILTER (WHERE current_rank_bucket = 11 AND COALESCE(recent_clicks, 0) > 0) as current_keywords_gt10_count,
 
-        -- Previous period keyword counts
         COUNT(DISTINCT query) FILTER (WHERE previous_rank_bucket BETWEEN 1 AND 10 AND COALESCE(previous_clicks, 0) > 0) as previous_keywords_1to10_count,
         COUNT(DISTINCT query) FILTER (WHERE previous_rank_bucket = 11 AND COALESCE(previous_clicks, 0) > 0) as previous_keywords_gt10_count
     FROM aggregated_data
@@ -146,7 +155,7 @@ previous_best AS (
     FROM aggregated_data WHERE COALESCE(previous_clicks, 0) > 0 ORDER BY page, previous_clicks DESC
 ),
 
--- NEW Step 6a: Keyword grouping for CURRENT period
+-- Step 6: Keyword pivot for CURRENT period (No changes here)
 current_keyword_groups AS (
     SELECT 
         page,
@@ -160,8 +169,6 @@ current_keyword_groups AS (
     WHERE current_rank_bucket IS NOT NULL AND COALESCE(recent_clicks, 0) > 0
     GROUP BY page, current_rank_bucket
 ),
-
--- NEW Step 6b: Keyword pivot for CURRENT period
 current_keyword_pivot AS (
     SELECT 
         page,
@@ -174,7 +181,7 @@ current_keyword_pivot AS (
     FROM current_keyword_groups GROUP BY page
 ),
 
--- NEW Step 7a: Keyword grouping for PREVIOUS period
+-- Step 7: Keyword pivot for PREVIOUS period (No changes here)
 previous_keyword_groups AS (
     SELECT 
         page,
@@ -188,8 +195,6 @@ previous_keyword_groups AS (
     WHERE previous_rank_bucket IS NOT NULL AND COALESCE(previous_clicks, 0) > 0
     GROUP BY page, previous_rank_bucket
 ),
-
--- NEW Step 7b: Keyword pivot for PREVIOUS period
 previous_keyword_pivot AS (
     SELECT 
         page,
@@ -202,7 +207,7 @@ previous_keyword_pivot AS (
     FROM previous_keyword_groups GROUP BY page
 ),
 
--- Step 8: Zero-click keywords (optional, can be kept as is)
+-- Step 8: Zero-click keywords (No changes here)
 zero_click_keywords AS (
     SELECT
         page,
@@ -215,9 +220,10 @@ zero_click_keywords AS (
     GROUP BY page
 )
 
--- Final output -- MODIFIED to include new columns
+-- Final output -- MODIFIED to join page_first_seen and add the date column
 SELECT 
     ps.page,
+    pfs.first_seen_date, -- NEW: The first date this page was seen in the data
     ps.page_total_clicks as total_clicks,
     ps.page_total_impressions as total_impressions,
     ROUND(ps.page_total_clicks::numeric * 100.0 / NULLIF(ps.page_total_impressions, 0), 2) as total_ctr,
@@ -259,9 +265,10 @@ SELECT
 FROM page_stats ps
 INNER JOIN current_best cb ON ps.page = cb.page
 LEFT JOIN previous_best pb ON ps.page = pb.page
-LEFT JOIN current_keyword_pivot ckp ON ps.page = ckp.page -- MODIFIED JOIN
-LEFT JOIN previous_keyword_pivot pkp ON ps.page = pkp.page -- NEW JOIN
+LEFT JOIN current_keyword_pivot ckp ON ps.page = ckp.page
+LEFT JOIN previous_keyword_pivot pkp ON ps.page = pkp.page
 LEFT JOIN zero_click_keywords zck ON ps.page = zck.page
+LEFT JOIN page_first_seen pfs ON ps.page = pfs.page -- NEW: Join to get the first_seen_date
 WHERE ps.page_total_clicks > 50
 ORDER BY potential_traffic DESC NULLS LAST
 LIMIT 100;`;

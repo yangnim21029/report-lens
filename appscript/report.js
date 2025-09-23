@@ -247,8 +247,9 @@ function callReportApi_(pageUrl, analysisText) {
     const err = (json && json.error) || 'unknown error';
     throw new Error(`Report API 回傳失敗: ${err}`);
   }
-  dlog(`[callReportApi_] ok content length=${(json.content || '').length} sample=${trunc(json.content, 180)}`);
-  return json.content || '（無輸出）';
+  const markdown = selectContextMarkdownFromApi_(json);
+  dlog(`[callReportApi_] ok markdown length=${(markdown || '').length} sample=${trunc(markdown, 180)}`);
+  return markdown || '（無輸出）';
 }
 
 
@@ -325,4 +326,35 @@ function normalizeUrl_(s) {
 
 function safeJson_(s) {
   try { return JSON.parse(s); } catch (e) { return null; }
+}
+
+function selectContextMarkdownFromApi_(apiResponse) {
+  if (apiResponse && typeof apiResponse.markdown === 'string' && apiResponse.markdown.trim()) {
+    return apiResponse.markdown.trim();
+  }
+  const suggestions = Array.isArray(apiResponse?.suggestions) ? apiResponse.suggestions : [];
+  if (!suggestions.length) return '';
+  return buildMarkdownFromSuggestions_(suggestions);
+}
+
+function buildMarkdownFromSuggestions_(suggestions) {
+  const header = '| 原文片段 | 建議調整 |';
+  const divider = '|:---|:---|';
+  const rows = suggestions
+    .map((item) => {
+      const before = sanitizeString_(item?.before);
+      const why = sanitizeString_(item?.whyProblemNow);
+      const adjust = sanitizeString_(item?.adjustAsFollows);
+      if (!before || !why || !adjust) return null;
+      return `| ${escapeTablePipes_(before)} | ${escapeTablePipes_(`${why}\n${adjust}`)} |`;
+    })
+    .filter(Boolean);
+  if (!rows.length) {
+    return '| 原文片段 | 建議調整 |\n|:---|:---|\n| 目前無需調整 | — |';
+  }
+  return [header, divider, ...rows].join('\n');
+}
+
+function escapeTablePipes_(text) {
+  return String(text || '').replace(/\|/g, '\\|');
 }

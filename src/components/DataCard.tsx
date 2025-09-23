@@ -13,6 +13,63 @@ import { buildEmailHtml } from "~/utils/email-builder";
 import { extractAnalysisData, formatAsMarkdown } from "~/utils/extract-format-html";
 // Use server API route to avoid CORS / ngrok HTML warning
 
+type ContextVectorApiSuggestion = {
+  before?: string;
+  whyProblemNow?: string;
+  adjustAsFollows?: string;
+};
+
+type ContextVectorApiResponse = {
+  markdown?: string | null;
+  suggestions?: ContextVectorApiSuggestion[];
+};
+
+function selectContextVectorMarkdown(response: ContextVectorApiResponse): string {
+  if (response && typeof response.markdown === "string" && response.markdown.trim()) {
+    return response.markdown.trim();
+  }
+  const suggestions = Array.isArray(response?.suggestions) ? response?.suggestions ?? [] : [];
+  if (!suggestions.length) {
+    return "| 原文片段 | 建議調整 |\n|:---|:---|\n| 目前無需調整 | — |";
+  }
+  const header = "| 原文片段 | 建議調整 |";
+  const divider = "|:---|:---|";
+  const rows = suggestions
+    .map((item) => ({
+      before: sanitizeSegment(item.before),
+      why: sanitizeSegment(item.whyProblemNow, "Why problem now:"),
+      adjust: sanitizeSegment(item.adjustAsFollows, "Adjust as follows:"),
+    }))
+    .filter((item) => item.before && item.why && item.adjust)
+    .map((item) => {
+      const right = `${item.why}\n${item.adjust}`.trim();
+      return `| ${escapePipes(item.before)} | ${escapePipes(right)} |`;
+    });
+  if (!rows.length) {
+    return "| 原文片段 | 建議調整 |\n|:---|:---|\n| 目前無需調整 | — |";
+  }
+  return [header, divider, ...rows].join("\n");
+}
+
+function sanitizeSegment(value: unknown, prefix?: string): string {
+  if (typeof value !== "string") return "";
+  const trimmed = value.replace(/\s+/g, " ").trim();
+  if (!trimmed || !prefix) return trimmed;
+  if (trimmed.toLowerCase().startsWith(prefix.toLowerCase())) return trimmed;
+  return `${prefix} ${trimmed}`.replace(/\s+/g, " ");
+}
+
+function escapePipes(text: string): string {
+  return text.replace(/\|/g, "\\|");
+}
+
+function formatNumberDisplay(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  const numeric = typeof value === 'number' ? value : Number(String(value).replace(/[^0-9.\-]/g, ''));
+  if (!Number.isFinite(numeric)) return null;
+  return Math.round(numeric).toLocaleString();
+}
+
 export const DataCard = memo(function DataCard({
   data,
   onModalChange,
@@ -140,11 +197,12 @@ export const DataCard = memo(function DataCard({
           throw new Error(`Context vector 取得失敗：${res.status}`);
         }
         const json = await res.json();
-        if (!json?.success || !json?.content) {
-          throw new Error("Context vector API 回傳錯誤");
+        if (!json?.success) {
+          throw new Error(json?.error || "Context vector API 回傳錯誤");
         }
-        setContextVector(json.content);
-        return json.content as string;
+        const markdown = selectContextVectorMarkdown(json);
+        setContextVector(markdown);
+        return markdown;
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         setContextVectorError(message);
@@ -259,6 +317,17 @@ export const DataCard = memo(function DataCard({
   const clickIntensity = Math.min(100, (data.best_query_clicks || 0) / 10);
 
   const CTR_FULL_SCORE = 39.8;
+
+  const firstSeenDate: string | null = (() => {
+    const raw = data?.first_seen_date;
+    if (!raw) return null;
+    const date = new Date(raw);
+    if (Number.isNaN(date.getTime())) return null;
+    return date.toLocaleDateString("zh-TW", { year: "numeric", month: "short", day: "numeric" });
+  })();
+
+  const previousClicksDisplay = formatNumberDisplay(data?.previous_period_clicks);
+  const previousImpressionsDisplay = formatNumberDisplay(data?.previous_period_impressions);
 
   // Map new field name and parse numeric rank change if available
   const positionChange: number | null = (() => {
@@ -491,6 +560,16 @@ export const DataCard = memo(function DataCard({
             {data.keywords_gt10_count !== null && data.keywords_gt10_count !== undefined && (
               <span title=">10 ranked keywords" className="text-[var(--gray-6)]">
                 {'>'}10: {data.keywords_gt10_count}
+              </span>
+            )}
+            {(previousClicksDisplay || previousImpressionsDisplay) && (
+              <span title="Performance in comparison window (約 4 個月前)">
+                ⏪ {previousClicksDisplay ?? '—'} clicks / {previousImpressionsDisplay ?? '—'} imp
+              </span>
+            )}
+            {firstSeenDate && (
+              <span title="首次偵測到的日期">
+                🗓️ first seen {firstSeenDate}
               </span>
             )}
             {(() => {
