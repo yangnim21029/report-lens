@@ -9,8 +9,8 @@ const openai = new OpenAI({ apiKey: env.OPENAI_API_KEY });
 const ContextVectorSuggestionSchema = z.object({
   before: z.string().min(20),
   whyProblemNow: z.string().min(1).max(40),
-  adjustAsFollows: z.string().min(1),
-  afterAdjust: z.string().min(20),
+  adjustAsFollows: z.string().min(1).max(40),
+  afterAdjust: z.string().min(40),
 });
 
 const ContextVectorResponseSchema = z.object({
@@ -47,7 +47,7 @@ export async function POST(req: Request) {
   const prompt = buildContextVectorPrompt(String(analysisText || ""), toPlainText(article).slice(0, 8000));
 
     const response = await openai.responses.parse({
-      model: "gpt-4.1-mini",
+      model: "ggpt-5-mini-2025-08-07",
       input: [
         { role: "system", content: "你是資深 SEO 策略師，輸出必須符合指定 JSON 結構。" },
         { role: "user", content: prompt },
@@ -136,8 +136,8 @@ function normalizeSuggestion(s: ContextVectorSuggestion) {
     value.startsWith(label) ? value : `${label}${value}`;
   return {
     before: s.before.trim(),
-    whyProblemNow: normalizeLabel('Why problem now: ', s.whyProblemNow).trim(),
-    adjustAsFollows: normalizeLabel('Adjust as follows: ', s.adjustAsFollows).trim(),
+    whyProblemNow: normalizeLabel('', s.whyProblemNow).trim(),
+    adjustAsFollows: normalizeLabel('', s.adjustAsFollows).trim(),
     afterAdjust: s.afterAdjust.trim(),
   } satisfies ContextVectorSuggestion;
 }
