@@ -141,11 +141,13 @@ Return all optimizations in "Only Markdown table" using the schema below:
 Do not include other suggestion from analysis.
 Answer why problem now directly
 Give Adjust as follows directly.
-Only Why problem now and Adjust as follows in second cell.
+Only Two items should in cols two cells :Why problem now and Adjust as follows, do not add anything else, it can short. just keep it.
 **Do not add any unassign paragraph**
-Use <br> for newline to read in a cell.
+Use two <br><br> for newline to read in a cell.
 Do not use ** in cell.
-Do not change H1, Toc, meta tag
+Do not change H1, Toc, meta tag, fast view
+Article already have fast view part
+focus on Weak content
 Why problem now state should clear SEO problem, rationale in short for high school student to understand.
 
 After Adjustment should start from "Why problem now:"
