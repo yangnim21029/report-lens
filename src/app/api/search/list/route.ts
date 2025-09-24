@@ -1,4 +1,34 @@
+import { unstable_cache } from "next/cache";
 import { NextResponse } from "next/server";
+
+const DAY_IN_SECONDS = 60 * 60 * 24;
+
+const fetchSearchList = unstable_cache(
+  async (site: string) => {
+    const sql = buildSqlForList(site);
+    const response = await fetch("https://unbiased-remarkably-arachnid.ngrok-free.app/api/query", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "ngrok-skip-browser-warning": "true",
+      },
+      body: JSON.stringify({ site, sql }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Upstream error ${response.status}`);
+    }
+
+    const data = await response.json();
+    if (Array.isArray(data)) return data;
+    if (Array.isArray(data?.data)) return data.data;
+    if (Array.isArray(data?.results)) return data.results;
+    if (Array.isArray(data?.rows)) return data.rows;
+    return [] as unknown[];
+  },
+  ["search-list"],
+  { revalidate: DAY_IN_SECONDS },
+);
 
 export async function POST(req: Request) {
   try {
@@ -6,28 +36,13 @@ export async function POST(req: Request) {
     const site = String(body?.site || "");
     if (!site) return NextResponse.json({ error: "Missing site" }, { status: 400 });
 
-    const sql = buildSqlForList(site);
-    const response = await fetch(
-      "https://unbiased-remarkably-arachnid.ngrok-free.app/api/query",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "ngrok-skip-browser-warning": "true",
-        },
-        body: JSON.stringify({ site, sql }),
+    const result = await fetchSearchList(site);
+    return NextResponse.json(result, {
+      status: 200,
+      headers: {
+        "Cache-Control": `s-maxage=${DAY_IN_SECONDS}, stale-while-revalidate=${DAY_IN_SECONDS}`,
       },
-    );
-    if (!response.ok) {
-      return NextResponse.json({ error: `Upstream error ${response.status}` }, { status: 502 });
-    }
-    const data = await response.json();
-    let result: unknown[] = [];
-    if (Array.isArray(data)) result = data;
-    else if (data?.data && Array.isArray(data.data)) result = data.data;
-    else if (data?.results && Array.isArray(data.results)) result = data.results;
-    else if (data?.rows && Array.isArray(data.rows)) result = data.rows;
-    return NextResponse.json(result, { status: 200 });
+    });
   } catch (err: unknown) {
     return NextResponse.json({ error: err instanceof Error ? err.message : "Unexpected error" }, { status: 500 });
   }

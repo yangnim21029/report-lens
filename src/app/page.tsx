@@ -323,6 +323,10 @@ export default function HomePage() {
 								<DataCard
 									key={index}
 									data={row}
+									site={site}
+									startDate={startDate}
+									periodDays={periodDays}
+									ctrBenchmark={39.8}
 									onModalChange={handleModalChange}
 								/>
 							))}

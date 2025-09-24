@@ -85,11 +85,12 @@ export async function POST(req: Request) {
 
     const targetKeyword = pickTargetKeyword(sortedByImpressions, ctrBenchmark);
 
-    const performanceTable = formatPerformanceTable(sortedByImpressions, 15);
     const coveredBullets = formatCoverageBullets(coverageResult.covered, 10);
     const uncoveredBullets = formatCoverageBullets(coverageResult.uncovered, 10);
 
     const totals = extractTotals(pageStats);
+
+    const performanceCsv = formatPerformanceCsv(sortedByImpressions, 20);
 
     const prompt = buildPrompt({
       topic,
@@ -98,7 +99,7 @@ export async function POST(req: Request) {
       startDate,
       periodDays,
       ctrBenchmark,
-      performanceTable,
+      performanceCsv,
       coveredBullets,
       uncoveredBullets,
       totals,
@@ -106,9 +107,7 @@ export async function POST(req: Request) {
     });
 
     const completion = await openai.chat.completions.create({
-      model: "gpt-4.1-mini",
-      temperature: 0.4,
-      max_tokens: 900,
+      model: "gpt-5-mini-2025-08-07",
       messages: [
         {
           role: "system",
@@ -259,22 +258,41 @@ function pickTargetKeyword(keywords: KeywordMetric[], ctrBenchmark: number): Key
   return keywords.length > 0 ? keywords[0]! : null;
 }
 
-function formatPerformanceTable(keywords: KeywordMetric[], limit: number) {
+function formatPerformanceCsv(keywords: KeywordMetric[], limit: number) {
+  const header = "Keyword, Impressions, Clicks, CTR";
   if (!keywords.length) {
-    return "| Keyword | Clicks | Impressions | CTR | Avg Position | Search Volume | Rank |\n| --- | ---: | ---: | ---: | ---: | ---: | --- |\n| 無資料 | 0 | 0 | 0% | N/A | N/A | - |";
+    return [header, "No data, N/A, N/A, N/A"].join("\n");
   }
   const subset = keywords.slice(0, limit);
-  const header = "| Keyword | Clicks | Impressions | CTR | Avg Position | Search Volume | Rank |";
-  const divider = "| --- | ---: | ---: | ---: | ---: | ---: | --- |";
   const lines = subset.map((k) => {
-    const clicks = formatNumber(k.clicks);
-    const imps = formatNumber(k.impressions);
-    const ctr = formatPercent(k.ctr);
-    const pos = typeof k.position === "number" ? k.position.toFixed(1) : "N/A";
-    const sv = formatNumber(k.searchVolume);
-    return `| ${k.keyword} | ${clicks} | ${imps} | ${ctr} | ${pos} | ${sv} | ${k.rankLabel || "-"} |`;
+    const keyword = escapeCsvField(k.keyword);
+    const impressions = formatCsvNumber(k.impressions);
+    const clicks = formatCsvNumber(k.clicks);
+    const ctr = formatCsvPercent(k.ctr);
+    return `${keyword}, ${impressions}, ${clicks}, ${ctr}`;
   });
-  return [header, divider, ...lines].join("\n");
+  return [header, ...lines].join("\n");
+}
+
+function escapeCsvField(value: string) {
+  const text = String(value ?? "");
+  if (/[",\n]/.test(text)) {
+    return `"${text.replace(/"/g, '""')}"`;
+  }
+  return text;
+}
+
+function formatCsvNumber(value: number | null | undefined) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "N/A";
+  if (Math.abs(value) >= 1) {
+    return Math.round(value).toString();
+  }
+  return value.toFixed(2).replace(/\.00$/, "");
+}
+
+function formatCsvPercent(value: number | null | undefined) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "N/A";
+  return `${value.toFixed(2)}%`;
 }
 
 function formatCoverageBullets(entries: CoverageDigest[], limit: number) {
@@ -314,7 +332,7 @@ function buildPrompt(params: {
   startDate: string;
   periodDays: number;
   ctrBenchmark: number;
-  performanceTable: string;
+  performanceCsv: string;
   coveredBullets: string;
   uncoveredBullets: string;
   totals: { totalClicks: number | null; totalImpressions: number | null; totalCtr: number | null };
@@ -327,85 +345,154 @@ function buildPrompt(params: {
     startDate,
     periodDays,
     ctrBenchmark,
-    performanceTable,
+    performanceCsv,
     coveredBullets,
     uncoveredBullets,
     totals,
     targetKeyword,
   } = params;
 
-  const totalsLine = `Page Totals — Clicks: ${formatNumber(totals.totalClicks)}, Impressions: ${formatNumber(totals.totalImpressions)}, CTR: ${formatPercent(totals.totalCtr)}`;
-  const targetLine = targetKeyword
-    ? `System-identified high-potential keyword candidate: "${targetKeyword.keyword}" (Impressions: ${formatNumber(targetKeyword.impressions)}, CTR: ${formatPercent(targetKeyword.ctr)}, Search Volume: ${formatNumber(targetKeyword.searchVolume ?? null)}).`
-    : "No keyword matched the benchmark criteria; choose the best available option based on the data.";
+  const topicOrUrl = topic || page;
+  const benchmarkDisplay = formatPercent(ctrBenchmark);
+  const totalsLine = `Clicks: ${formatNumber(totals.totalClicks)}, Impressions: ${formatNumber(totals.totalImpressions)}, CTR: ${formatPercent(totals.totalCtr)}`;
+  const targetSummary = targetKeyword
+    ? `Target hint → ${targetKeyword.keyword} (Impr: ${formatNumber(targetKeyword.impressions)}, CTR: ${formatPercent(targetKeyword.ctr)}, SV: ${formatNumber(targetKeyword.searchVolume ?? null)})`
+    : null;
 
-  return [
-    "Meta Title Optimization for High-Potential Keywords",
-    "Mindset",
-    "User-Centric: Our starting point is not what we have, but what the user is missing.",
-    "Opportunity-Driven: Focus on keywords with validated demand but low CTR.",
-    "Strategy-First: Complete user strategy before crafting titles.",
-    "",
-    "Task",
-    `To optimize the Meta Title for ${topic} with the goal of significantly increasing the CTR for its primary target keyword.`,
-    "",
-    `Performance Data covers ${periodDays} days starting ${startDate}. CTR benchmark is ${ctrBenchmark.toFixed(2)}%.`,
-    targetLine,
-    "",
-    "Output Requirements:",
-    "1. Return GitHub-flavored Markdown that pastes cleanly into Google Docs.",
-    "2. Use \"##\" for every major section and \"###\" for subsections exactly as in the template.",
-    "3. Keep all section headings in English, but write the narrative and bullet text in Traditional Chinese.",
-    "4. Meta titles must stay under 58 characters, be specific, and skip keyword stuffing.",
-    "5. Use the provided performance table and coverage bullet lists without altering the numeric values.",
-    "",
-    "Template to follow exactly:",
-    "## Target Keyword",
-    "- Keyword: <填入最終鎖定的目標關鍵字>",
-    "",
-    "## User Analysis Report",
-    "### User Persona",
-    "- <描述用戶層級>",
-    "### Prior Knowledge",
-    "- <使用者已有的背景認知>",
-    "### Core Information Gap",
-    "- <最想補足的決策資訊>",
-    "",
-    "## Performance Snapshot",
-    "(Insert the Markdown table provided below.)",
-    "",
-    "## Meta Title Optimization Proposals",
-    "### Proposal A (Strategy: <策略名稱>)",
-    "- Title: <標題版本A>",
-    "- Rationale: <為何此策略能提高CTR>",
-    "### Proposal B (Strategy: <策略名稱>)",
-    "- Title: <標題版本B>",
-    "- Rationale: <為何此策略能提高CTR>",
-    "### Proposal C (Strategy: <策略名稱>)",
-    "- Title: <標題版本C>",
-    "- Rationale: <為何此策略能提高CTR>",
-    "(If沒有第三個方案，就省略整個 Proposal C 小節。)",
-    "",
-    "## Additional Context",
-    `- CTR Benchmark: ${ctrBenchmark.toFixed(2)}%`,
-    `- Page Totals: ${totalsLine}`,
-    `- Page URL: ${page}`,
-    `- Site Token: ${site}`,
-    "- Coverage Insights:",
-    "  - Covered Keywords: (use bullet list below)",
-    "  - Uncovered Keywords: (use bullet list below)",
-    "",
-    "Markdown table for `## Performance Snapshot`:",
-    performanceTable,
-    "",
-    "Bullet list for Covered Keywords (copy under Additional Context > Coverage Insights):",
-    coveredBullets,
-    "",
-    "Bullet list for Uncovered Keywords (copy under Additional Context > Coverage Insights):",
-    uncoveredBullets,
-    "",
-    "Reminder: weave the data-driven rationale into every meta title proposal.",
-  ].join("\n");
+  const coverageSummary = buildCoverageComment("Covered", coveredBullets);
+  const uncoveredSummary = buildCoverageComment("Uncovered", uncoveredBullets);
+
+  const lines: string[] = [];
+  lines.push("### **SOP: Meta Title Optimization for High-Potential Keywords**");
+  lines.push("#### **mindset**");
+  lines.push("* **User-Centric & Reverse-Engineered:** Consider the difficulty required to input a query. This reflects the user's knowledge, their understanding of the unknown, and what they must already know. Provide meta titles based on this analysis.");
+  lines.push(`* **Opportunity-Driven:** The keyword with the most impressions, if its CTR is below the benchmark (e.g., ${benchmarkDisplay}), represents the biggest optimization opportunity and potential.`);
+  lines.push("* **Strategy-First:** The title is the final embodiment of the strategy, not a product of inspiration.");
+  lines.push("#### **task**");
+  lines.push("Deconstruct keywords from the perspectives of the \"User Knowledge Spectrum\" and \"Search Intent,\" focusing on the keyword with the greatest potential opportunity.");
+  lines.push(`- Topic / URL: ${topicOrUrl}`);
+  lines.push("");
+  lines.push("#### **thinking**");
+  lines.push("**Core Analysis: Reverse-Engineer the User from the Query**");
+  lines.push("**Definition:** Treat each query as the exact input the user can already type. Assume they have already skimmed existing meta titles yet remain unconvinced—your rationale must expose what those titles failed to answer.");
+  lines.push("Ask: **\"What does a user need to know to be able to type this keyword?\"** Use the following framework to analyze the provided keywords.");
+  lines.push("* **Low-Difficulty Query (Broad terms, e.g., \"shrine amulet\"):**");
+  lines.push("* **User Knowledge:**");
+  lines.push("* **Search Intent:**");
+  lines.push("* **Information Gap:**");
+  lines.push("* **Medium-Difficulty Query (Specific name + broad term, e.g., \"Asagaya Shrine amulet\"):**");
+  lines.push("* **User Knowledge:**");
+  lines.push("* **Search Intent:**");
+  lines.push("* **Information Gap:**");
+  lines.push("* **High-Difficulty Query (Specific name + specific detail, e.g., \"Asagaya Shrine bracelet color meaning\"):**");
+  lines.push("* **User Knowledge:**");
+  lines.push("* **Search Intent:**");
+  lines.push("* **Information Gap:**");
+  lines.push("");
+  lines.push("#### **detail defined tasks**");
+  lines.push("1. **Data Input & Target Identification:**");
+  lines.push("* Receive performance data and the CTR benchmark.");
+  lines.push("* Identify the **single target keyword** that fits the \"highest impressions, but CTR below benchmark\" profile.");
+  lines.push("* Input data provided below:");
+  lines.push("```");
+  lines.push(performanceCsv);
+  lines.push("```");
+  lines.push(`* CTR Benchmark: ${benchmarkDisplay}`);
+  lines.push(`* Data period: ${periodDays} days starting ${startDate}`);
+  lines.push("2. **User & Query Deconstruction:**");
+  lines.push("* Apply the `thinking` framework above to select at least three keywords that map to Low / Medium / High difficulty tiers.");
+  lines.push("* Pinpoint the precise User Persona, Prior Knowledge, and Information Gap for each tier, highlight which keyword is the **primary target** (the highest impressions below benchmark), and explain why current SERP titles are failing that user.");
+  lines.push("3. **Communication Strategy Formulation:**");
+  lines.push("* Based on the target user's Information Gap, design at least two distinct communication strategies (e.g., The Guide, The Benefit-Oriented).");
+  lines.push("4. **Strategy Decision Chain:**");
+  lines.push("* Step 1 — Hot Topic Gate: Decide if the primary target keyword signals a time-sensitive or newsworthy event. If yes, lock in the **Amazing Event** style (entity + spark) for all proposals.");
+  lines.push("* Step 2 — Short-Tail Coverage: Check if that target keyword has a short-tail variant (<=2 words) already in the query list. If it does, ensure the final titles bridge at least two distinct intents (e.g., location + benefit).");
+  lines.push("* Step 3 — Evergreen Strategy: If neither condition applies, fall back to the strongest general strategy that solves the user's information gap.");
+  lines.push("");
+  lines.push("#### **todo**");
+  lines.push("* [x] Fill in the required data (topic, benchmark, performance data).  ");
+  lines.push("* [ ] Execute the `thinking` framework to analyze the queries.");
+  lines.push("* [ ] Report the identified \"target keyword\" and its detailed analysis.");
+  lines.push("* [ ] Run the strategy decision chain (Hot Topic → Short-Tail → Evergreen) and record the outcome.");
+  lines.push("* [ ] Draft 2-3 meta title options based on the defined strategies.");
+  lines.push("* [ ] Provide a rationale for each title.");
+  lines.push("");
+  lines.push("#### **not to do**");
+  lines.push("* **Do not state known facts:** Avoid titles that only confirm information the user already knows.");
+  lines.push("* **Do not be vague:** Avoid generic titles that don't make a specific \"promise\" to the user.");
+  lines.push("* **Do not stuff keywords:** Focus on communicating the solution, not just listing terms.");
+  lines.push("");
+  lines.push("#### **notice**");
+  lines.push("* The goal is to create a title that perfectly matches the user's knowledge level and bridges their specific information gap.");
+  lines.push("* A low CTR on a high-impression keyword is the clearest signal of a mismatch between the user's intent and the title's promise.");
+  lines.push("* For event-driven topics, combine the concrete entity (e.g., location, performer, object) with an emotional or urgent hook—describe the spark (e.g., sold out, clash, reveal) instead of generic words like ‘爭議’.");
+  lines.push("* If the Hot Topic gate fires, every proposal must follow the **Amazing Event** style (entity + spark) and explicitly surface the urgency.");
+  lines.push("* Each proposed title must include the primary target keyword verbatim.");
+  lines.push("");
+  lines.push("#### **output format**");
+  lines.push("1. **Target Keyword Identified:**");
+  lines.push("* [AI will fill in the identified target keyword here]");
+  lines.push("2. **User & Query Deconstruction Report (from the `thinking` framework):**");
+  lines.push("* **Low-Difficulty Entry:**");
+  lines.push("  * **Keyword:** [AI-filled keyword]");
+  lines.push("  * **User Knowledge:** [...]");
+  lines.push("  * **Search Intent:** [...]");
+  lines.push("  * **Core Information Gap:** [...]");
+  lines.push("  * **Rationale:** [Why existing SERP titles miss this need]");
+  lines.push("* **Medium-Difficulty Entry:**");
+  lines.push("  * **Keyword:** [AI-filled keyword — mark with (Target Keyword) if applicable]");
+  lines.push("  * **User Knowledge:** [...]");
+  lines.push("  * **Search Intent:** [...]");
+  lines.push("  * **Core Information Gap:** [...]");
+  lines.push("  * **Rationale:** [Why existing SERP titles miss this need]");
+  lines.push("* **High-Difficulty Entry:**");
+  lines.push("  * **Keyword:** [AI-filled keyword]");
+  lines.push("  * **User Knowledge:** [...]");
+  lines.push("  * **Search Intent:** [...]");
+  lines.push("  * **Core Information Gap:** [...]");
+  lines.push("  * **Rationale:** [Why existing SERP titles miss this need]");
+  lines.push("* **Strategy Decision Notes:**");
+  lines.push("  * **Hot Topic Gate:** [Yes/No + reasoning]");
+  lines.push("  * **Short-Tail Coverage:** [Yes/No + intents merged]");
+  lines.push("  * **Fallback Strategy:** [Chosen general strategy if applicable]");
+  lines.push("3. **Meta Title Optimization Proposals:**");
+  lines.push("* **Proposal A (Strategy: [e.g., The Guide])**");
+  lines.push("* **Title:** [AI-written Title A]");
+  lines.push("* **Rationale:** [Explanation of how this title addresses the identified Information Gap]");
+  lines.push("* **Proposal B (Strategy: [e.g., The Benefit-Oriented])**");
+  lines.push("* **Title:** [AI-written Title B]");
+  lines.push("* **Rationale:** [Explanation of how this title appeals to the identified Search Intent]");
+
+  if (targetSummary) {
+    lines.push("");
+    lines.push(`// ${targetSummary}`);
+  }
+
+  lines.push(`// Page totals → ${totalsLine}`);
+  lines.push(`// Site token → ${site}`);
+  lines.push(`// Page URL → ${page}`);
+  lines.push(`// Data timeframe → ${periodDays} days starting ${startDate}`);
+
+  if (coverageSummary) {
+    lines.push(`// ${coverageSummary}`);
+  }
+  if (uncoveredSummary) {
+    lines.push(`// ${uncoveredSummary}`);
+  }
+
+  return lines.join("\n");
+}
+
+function buildCoverageComment(label: string, bullets: string) {
+  if (!bullets || !bullets.trim() || bullets.trim() === "- 無可用資料") return null;
+  const condensed = bullets
+    .split("\n")
+    .map((line) => line.replace(/^[-\s]+/, "").trim())
+    .filter(Boolean)
+    .slice(0, 5)
+    .join("; ");
+  if (!condensed) return null;
+  return `${label} keywords sample → ${condensed}`;
 }
 
 function toNumber(value: unknown): number | null {

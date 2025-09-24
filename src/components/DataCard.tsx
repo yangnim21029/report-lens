@@ -24,6 +24,26 @@ type ContextVectorApiResponse = {
   suggestions?: ContextVectorApiSuggestion[];
 };
 
+interface DataCardProps {
+  data: any;
+  onModalChange?: (isOpen: boolean) => void;
+  site?: string;
+  startDate?: string;
+  periodDays?: number;
+  ctrBenchmark?: number;
+}
+
+type MetaGenerationResult = {
+  report: string;
+  targetKeyword?: {
+    keyword: string;
+    ctr: number | null;
+    impressions: number | null;
+    searchVolume?: number | null;
+  } | null;
+  prompt?: string;
+};
+
 function selectContextVectorMarkdown(response: ContextVectorApiResponse): string {
   if (response && typeof response.markdown === "string" && response.markdown.trim()) {
     return response.markdown.trim();
@@ -73,7 +93,11 @@ function formatNumberDisplay(value: unknown): string | null {
 export const DataCard = memo(function DataCard({
   data,
   onModalChange,
-}: { data: any; onModalChange?: (isOpen: boolean) => void }) {
+  site,
+  startDate,
+  periodDays,
+  ctrBenchmark,
+}: DataCardProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [hasAnalyzed, setHasAnalyzed] = useState(false);
   const [showKeywords, setShowKeywords] = useState(false);
@@ -85,6 +109,11 @@ export const DataCard = memo(function DataCard({
   const [contextVector, setContextVector] = useState<string | null>(null);
   const [contextVectorError, setContextVectorError] = useState<string | null>(null);
   const contextVectorPromiseRef = useRef<Promise<string> | null>(null);
+  const [metaResult, setMetaResult] = useState<MetaGenerationResult | null>(null);
+  const [isGeneratingMeta, setIsGeneratingMeta] = useState(false);
+  const [metaError, setMetaError] = useState<string | null>(null);
+  const [metaCopied, setMetaCopied] = useState(false);
+  const [metaPromptCopied, setMetaPromptCopied] = useState(false);
   const [outline, setOutline] = useState<string | null>(null);
   const [outlineError, setOutlineError] = useState<string | null>(null);
   const outlinePromiseRef = useRef<Promise<string> | null>(null);
@@ -103,6 +132,12 @@ export const DataCard = memo(function DataCard({
   const [explorerError, setExplorerError] = useState<string | null>(null);
   const [explorerInsights, setExplorerInsights] = useState<any | null>(null);
   const [explorerShowAll, setExplorerShowAll] = useState(false);
+
+  const CTR_FULL_SCORE = 39.8;
+  const pageUrl = typeof data?.page === "string" ? data.page : "";
+  const topicCandidate = typeof data?.best_query === "string" ? data.best_query.trim() : "";
+  const canGenerateMeta = Boolean(site && pageUrl);
+  const metaCtrBenchmark = typeof ctrBenchmark === "number" && Number.isFinite(ctrBenchmark) ? ctrBenchmark : CTR_FULL_SCORE;
 
   const handleAnalyze = useCallback(() => {
     const run = async () => {
@@ -175,6 +210,98 @@ export const DataCard = memo(function DataCard({
   const handleSendToChat = useCallback(() => {
     alert("Chat integration removed in REST migration");
   }, []);
+
+  const handleGenerateMeta = useCallback(async () => {
+    if (!canGenerateMeta || !site || !pageUrl) {
+      setMetaError("缺少 site 或 page 資料，無法生成標題提案。");
+      return;
+    }
+    setIsGeneratingMeta(true);
+    setMetaError(null);
+    try {
+      const payload: Record<string, unknown> = {
+        site,
+        page: pageUrl,
+        ctrBenchmark: metaCtrBenchmark,
+      };
+      if (topicCandidate) payload.topic = topicCandidate;
+      if (startDate) payload.startDate = startDate;
+      if (typeof periodDays === "number" && Number.isFinite(periodDays)) payload.periodDays = periodDays;
+
+      const response = await fetch("/api/metatag", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      const json = await response.json().catch(() => null);
+      if (!response.ok || !json?.success) {
+        const detail = json?.error || `Meta generation failed: ${response.status}`;
+        throw new Error(detail);
+      }
+
+      const report = typeof json.report === "string" ? json.report.trim() : "";
+      if (!report) {
+        throw new Error("Meta generation returned empty report");
+      }
+
+      const rawTarget = json?.targetKeyword;
+      const keywordText = rawTarget && typeof rawTarget === "object" ? String(rawTarget.keyword ?? "").trim() : "";
+      const targetKeyword = keywordText
+        ? {
+            keyword: keywordText,
+            ctr: typeof rawTarget.ctr === "number" && Number.isFinite(rawTarget.ctr) ? rawTarget.ctr : null,
+            impressions: typeof rawTarget.impressions === "number" && Number.isFinite(rawTarget.impressions)
+              ? rawTarget.impressions
+              : null,
+            searchVolume: typeof rawTarget.searchVolume === "number" && Number.isFinite(rawTarget.searchVolume)
+              ? rawTarget.searchVolume
+              : null,
+          }
+        : null;
+
+      setMetaResult({
+        report,
+        targetKeyword,
+        prompt: typeof json.prompt === "string" ? json.prompt : undefined,
+      });
+      setMetaCopied(false);
+      setMetaPromptCopied(false);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setMetaError(message);
+      setMetaResult(null);
+      setMetaCopied(false);
+      setMetaPromptCopied(false);
+      console.error("[DataCard] meta generation failed", err);
+    } finally {
+      setIsGeneratingMeta(false);
+    }
+  }, [canGenerateMeta, site, pageUrl, metaCtrBenchmark, topicCandidate, startDate, periodDays]);
+
+  const handleCopyMeta = useCallback(async () => {
+    if (!metaResult?.report) return;
+    try {
+      await navigator.clipboard.writeText(metaResult.report);
+      setMetaCopied(true);
+      setTimeout(() => setMetaCopied(false), 1800);
+    } catch (err) {
+      console.error("[DataCard] copy meta report failed", err);
+      alert("複製內容失敗，請手動複製。");
+    }
+  }, [metaResult]);
+
+  const handleCopyPrompt = useCallback(async () => {
+    if (!metaResult?.prompt) return;
+    try {
+      await navigator.clipboard.writeText(metaResult.prompt);
+      setMetaPromptCopied(true);
+      setTimeout(() => setMetaPromptCopied(false), 1800);
+    } catch (err) {
+      console.error("[DataCard] copy prompt failed", err);
+      alert("複製 Prompt 失敗，請手動複製。");
+    }
+  }, [metaResult]);
 
   const ensureContextVector = useCallback(async () => {
     if (!analysis || !analysis.analysis) {
@@ -315,8 +442,6 @@ export const DataCard = memo(function DataCard({
 
   // Get click intensity for visual indicator
   const clickIntensity = Math.min(100, (data.best_query_clicks || 0) / 10);
-
-  const CTR_FULL_SCORE = 39.8;
 
   const firstSeenDate: string | null = (() => {
     const raw = data?.first_seen_date;
@@ -686,7 +811,67 @@ export const DataCard = memo(function DataCard({
           contextVectorError={contextVectorError}
           showKeywords={showKeywords}
           onToggleKeywords={() => setShowKeywords((prev) => !prev)}
+          onGenerateMeta={canGenerateMeta ? handleGenerateMeta : undefined}
+          isGeneratingMeta={isGeneratingMeta}
+          canGenerateMeta={canGenerateMeta}
+          hasMetaResult={Boolean(metaResult?.report)}
         />
+
+        {metaError && (
+          <div className="mt-[var(--space-xs)] text-[var(--accent-primary)] text-[var(--text-xxs)]">
+            {metaError}
+          </div>
+        )}
+
+        {metaResult?.report && (
+          <div className="mt-[var(--space-sm)] space-y-[var(--space-sm)] border border-[var(--gray-6)] bg-[var(--paper)] p-[var(--space-md)]">
+            <div className="flex flex-wrap items-center justify-between gap-[var(--space-sm)]">
+              <div className="flex flex-col gap-[2px]">
+                <span className="font-black text-[var(--ink)] text-[var(--text-sm)] uppercase tracking-wide">
+                  Meta Title 提案
+                </span>
+                {metaResult.targetKeyword?.keyword && (
+                  <span className="text-[var(--gray-5)] text-[var(--text-xxs)]">
+                    建議關鍵字：{metaResult.targetKeyword.keyword}
+                  </span>
+                )}
+              </div>
+              <div className="flex flex-wrap items-center gap-[var(--space-xs)]">
+                <button
+                  onClick={handleCopyMeta}
+                  className="border border-[var(--accent-primary)] bg-transparent px-[var(--space-sm)] py-[var(--space-xs)] text-[var(--accent-primary)] text-[var(--text-xxs)] uppercase tracking-wide transition-colors hover:bg-[var(--accent-primary)] hover:text-[var(--paper)]"
+                >
+                  {metaCopied ? "已複製" : "複製內容"}
+                </button>
+                {metaResult.prompt && (
+                  <button
+                    onClick={handleCopyPrompt}
+                    className="border border-[var(--gray-5)] bg-transparent px-[var(--space-sm)] py-[var(--space-xs)] text-[var(--gray-4)] text-[var(--text-xxs)] uppercase tracking-wide transition-colors hover:border-[var(--gray-4)] hover:bg-[var(--gray-8)]"
+                  >
+                    {metaPromptCopied ? "Prompt✓" : "複製 Prompt"}
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div className="max-h-[360px] overflow-y-auto rounded-sm bg-[var(--gray-9)] p-[var(--space-md)] shadow-inner">
+              <pre className="whitespace-pre-wrap break-words text-[var(--gray-2)] text-[var(--text-xs)] leading-relaxed">
+                {metaResult.report}
+              </pre>
+            </div>
+
+            {metaResult.prompt && (
+              <details className="rounded-sm bg-[var(--gray-9)] p-[var(--space-sm)] text-[var(--text-xxs)] text-[var(--gray-5)]">
+                <summary className="cursor-pointer text-[var(--gray-3)] text-[var(--text-xxs)] font-bold">
+                  查看完整 Prompt
+                </summary>
+                <pre className="mt-[var(--space-xs)] max-h-[280px] overflow-y-auto whitespace-pre-wrap break-words text-[var(--gray-4)]">
+                  {metaResult.prompt}
+                </pre>
+              </details>
+            )}
+          </div>
+        )}
 
         {/* Keywords - Hidden by default */}
         {showKeywords && (

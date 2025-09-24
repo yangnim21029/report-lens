@@ -13,6 +13,10 @@ interface DataCardActionsProps {
   contextVectorError: string | null;
   showKeywords: boolean;
   onToggleKeywords: () => void;
+  onGenerateMeta?: () => void;
+  isGeneratingMeta?: boolean;
+  canGenerateMeta?: boolean;
+  hasMetaResult?: boolean;
 }
 
 export const DataCardActions = memo(function DataCardActions({
@@ -26,6 +30,10 @@ export const DataCardActions = memo(function DataCardActions({
   contextVectorError,
   showKeywords,
   onToggleKeywords,
+  onGenerateMeta,
+  isGeneratingMeta,
+  canGenerateMeta,
+  hasMetaResult,
 }: DataCardActionsProps) {
   return (
     <div className="flex flex-col gap-[var(--space-xs)]">
@@ -37,6 +45,16 @@ export const DataCardActions = memo(function DataCardActions({
         >
           {isLoading ? "LOADING..." : "ANALYZE"}
         </button>
+
+        {onGenerateMeta && (
+          <button
+            onClick={onGenerateMeta}
+            disabled={!canGenerateMeta || Boolean(isGeneratingMeta)}
+            className="border-2 border-[var(--accent-primary)] bg-transparent px-[var(--space-md)] py-[var(--space-sm)] font-bold text-[var(--accent-primary)] text-[var(--text-xs)] uppercase tracking-wide transition-all duration-[var(--duration-fast)] hover:bg-[var(--accent-primary)] hover:text-[var(--paper)] disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            {isGeneratingMeta ? "生成中..." : hasMetaResult ? "再次生成" : "生成標題提案"}
+          </button>
+        )}
 
         {hasAnalysis && (
           <div className="flex gap-[var(--space-xs)]">
