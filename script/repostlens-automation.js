@@ -605,10 +605,43 @@ const RepostLensAutomation = (() => {
   };
 
   const parseOutlineEntries = (outline) => {
-    const text = sanitizeMultiline(outline);
-    if (!text) return [];
-    return text
-      .split(/\r?\n/)
+    if (!outline) return [];
+    let raw = outline;
+    if (typeof raw === 'string') raw = raw.trim();
+
+    try {
+      const parsed = JSON.parse(String(raw));
+      if (parsed && typeof parsed === 'object') {
+        if (typeof parsed.outline === 'string') {
+          raw = parsed.outline;
+        } else if (Array.isArray(parsed.sections)) {
+          return parsed.sections
+            .map((section) => ({
+              level: 2,
+              text: sanitizeString(section?.title || section?.heading || ''),
+              items: Array.isArray(section?.items) ? section.items : [],
+            }))
+            .flatMap((section) => {
+              const rows = [];
+              if (section.text) rows.push({ level: 2, text: section.text });
+              section.items.forEach((item) => {
+                const child = typeof item === 'string' ? item : item?.text || item?.title || '';
+                const cleaned = sanitizeString(child);
+                if (cleaned) rows.push({ level: 3, text: cleaned });
+              });
+              return rows;
+            });
+        }
+      }
+    } catch {
+      // not JSON, continue with raw string
+    }
+
+    const textValue = sanitizeMultiline(raw);
+    if (!textValue) return [];
+    return textValue
+      .split(/?
+/)
       .map((line) => line.trim())
       .filter((line) => line && line !== '## Checklist — 我會做的事')
       .map((line) => {
