@@ -41,6 +41,7 @@ export async function POST(req: Request) {
         return NextResponse.json({ success: false, error: "Missing pageUrl or article content" }, { status: 400 });
       }
 
+      // Try to get content from supported sites first
       try {
         const { siteCode, resourceId } = deriveSiteCodeAndId(pageUrlRaw);
         const res = await fetch("https://page-lens-zeta.vercel.app/api/proxy/content", {
@@ -63,9 +64,11 @@ export async function POST(req: Request) {
           captureError = new Error(`Proxy fetch failed: ${res.status}`);
         }
       } catch (err) {
+        // If site is not supported, try direct fetch
         captureError = err;
       }
 
+      // Fallback to direct fetch for unsupported sites
       if (!articlePlain && pageUrlRaw) {
         try {
           const direct = await fetch(pageUrlRaw, {

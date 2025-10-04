@@ -226,6 +226,7 @@ const RepostLensAutomation = (() => {
       let contextNote = null;
       try {
         contextResult = callReportApi(normalizedUrl, analysisText, fallbackArticleText);
+        dlog(`[processRow] context-vector success: ${contextResult.suggestions.length} suggestions`);
       } catch (error) {
         const message = error && error.message ? String(error.message) : String(error);
         contextResult = { suggestions: [], markdown: 'Context vector 未生成' };
@@ -477,8 +478,13 @@ const RepostLensAutomation = (() => {
       pageUrl: String(pageUrl || '').replace(/\s+/g, ''),
       analysisText,
     };
-    if (articleText) {
-      payload.articleText = String(articleText).slice(0, 8000);
+    // Always try to provide article text, either from sheet or by fetching
+    const finalArticleText = articleText || fetchArticleText(pageUrl);
+    if (finalArticleText) {
+      payload.articleText = String(finalArticleText).slice(0, 8000);
+      dlog(`[callReportApi] providing article text: ${finalArticleText.length} chars`);
+    } else {
+      dlog(`[callReportApi] no article text available for ${pageUrl}`);
     }
     const res = UrlFetchApp.fetch(endpoint, {
       method: 'post',
@@ -491,11 +497,14 @@ const RepostLensAutomation = (() => {
       throw new Error(`context-vector 錯誤: HTTP ${res.getResponseCode()}`);
     }
     const json = safeJson(res.getContentText());
+    dlog(`[callReportApi] parsed JSON: ${JSON.stringify(json).slice(0, 200)}...`);
     if (!json || json.success !== true) throw new Error('context-vector 失敗');
-    return {
+    const result = {
       suggestions: Array.isArray(json.suggestions) ? json.suggestions : [],
       markdown: sanitizeMultiline(json.markdown || ''),
     };
+    dlog(`[callReportApi] returning ${result.suggestions.length} suggestions`);
+    return result;
   };
 
   const callOutlineApi = (analysisText) => {
@@ -578,17 +587,20 @@ const RepostLensAutomation = (() => {
 
   const buildAdjustmentsTableData = (contextResult) => {
     const suggestions = Array.isArray(contextResult?.suggestions) ? contextResult.suggestions : [];
+    dlog(`[buildAdjustmentsTableData] ${suggestions.length} suggestions received`);
     if (!suggestions.length) return null;
     const rows = suggestions
       .map((item) => {
         const before = sanitizeString(item && item.before);
         const why = sanitizeString(item && item.whyProblemNow);
         const after = sanitizeMultiline((item && (item.afterAdjust || item.adjustAsFollows)) || '');
+        dlog(`[buildAdjustmentsTableData] processing: before="${before}", why="${why}", after="${after}"`);
         if (!before || (!why && !after)) return null;
         const suggestion = [why, after].filter(Boolean).join('\n\n');
         return [before, suggestion];
       })
       .filter(Boolean);
+    dlog(`[buildAdjustmentsTableData] ${rows.length} valid rows created`);
     if (!rows.length) return null;
     return {
       title: 'Content Adjustments',
@@ -640,8 +652,7 @@ const RepostLensAutomation = (() => {
     const textValue = sanitizeMultiline(raw);
     if (!textValue) return [];
     return textValue
-      .split(/?
-/)
+      .split(/\r?\n/)
       .map((line) => line.trim())
       .filter((line) => line && line !== '## Checklist — 我會做的事')
       .map((line) => {
