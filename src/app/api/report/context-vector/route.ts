@@ -21,30 +21,82 @@ export type ContextVectorSuggestion = z.infer<typeof ContextVectorSuggestionSche
 
 export async function POST(req: Request) {
   try {
-    const { analysisText, pageUrl } = await req.json();
-    if (!pageUrl) return NextResponse.json({ success: false, error: "Missing pageUrl" }, { status: 400 });
+    const body = (await req.json()) as {
+      analysisText?: string;
+      pageUrl?: string;
+      articleHtml?: string;
+      articleText?: string;
+    };
 
-    const { siteCode, resourceId } = deriveSiteCodeAndId(pageUrl);
-    const res = await fetch("https://page-lens-zeta.vercel.app/api/proxy/content", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ resourceId, siteCode }),
-    });
-    if (!res.ok) {
-      return NextResponse.json({ success: false, error: `Proxy fetch failed: ${res.status}` }, { status: 502 });
+    const pageUrlRaw = typeof body?.pageUrl === "string" ? body.pageUrl.trim() : "";
+    const analysisText = body?.analysisText ?? "";
+    const providedText = typeof body?.articleText === "string" ? body.articleText.trim() : "";
+    const providedHtml = typeof body?.articleHtml === "string" ? body.articleHtml : "";
+
+    let articlePlain = providedText || (providedHtml ? toPlainText(providedHtml) : "");
+    let captureError: unknown = null;
+
+    if (!articlePlain) {
+      if (!pageUrlRaw) {
+        return NextResponse.json({ success: false, error: "Missing pageUrl or article content" }, { status: 400 });
+      }
+
+      try {
+        const { siteCode, resourceId } = deriveSiteCodeAndId(pageUrlRaw);
+        const res = await fetch("https://page-lens-zeta.vercel.app/api/proxy/content", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ resourceId, siteCode }),
+        });
+        if (res.ok) {
+          const data = await res.json().catch(() => ({} as any));
+          const article =
+            (typeof data?.content?.data?.post_content === "string" ? data.content.data.post_content : undefined) ||
+            (typeof data?.data?.post_content === "string" ? data.data.post_content : undefined) ||
+            (typeof data?.data?.content === "string" ? data.data.content : undefined) ||
+            (typeof data?.content === "string" ? data.content : undefined) ||
+            (typeof data?.html === "string" ? data.html : undefined) ||
+            (typeof data?.text === "string" ? data.text : undefined) ||
+            "";
+          articlePlain = toPlainText(article);
+        } else {
+          captureError = new Error(`Proxy fetch failed: ${res.status}`);
+        }
+      } catch (err) {
+        captureError = err;
+      }
+
+      if (!articlePlain && pageUrlRaw) {
+        try {
+          const direct = await fetch(pageUrlRaw, {
+            method: "GET",
+            headers: { "User-Agent": "Mozilla/5.0 (compatible; RepostLens/1.0)" },
+          });
+          if (direct.ok) {
+            articlePlain = toPlainText(await direct.text());
+          } else if (!captureError) {
+            captureError = new Error(`Direct fetch failed: ${direct.status}`);
+          }
+        } catch (err) {
+          captureError = captureError || err;
+        }
+      }
     }
-    const data = await res.json().catch(() => ({} as any));
 
-    const article: string =
-      (typeof data?.content?.data?.post_content === "string" ? data.content.data.post_content : undefined) ||
-      (typeof data?.data?.post_content === "string" ? data.data.post_content : undefined) ||
-      (typeof data?.data?.content === "string" ? data.data.content : undefined) ||
-      (typeof data?.content === "string" ? data.content : undefined) ||
-      (typeof data?.html === "string" ? data.html : undefined) ||
-      (typeof data?.text === "string" ? data.text : undefined) ||
-      "";
+    articlePlain = articlePlain?.slice(0, 8000) ?? "";
 
-    const prompt = buildContextVectorPrompt(String(analysisText || ""), toPlainText(article).slice(0, 8000));
+    if (!articlePlain) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Unable to retrieve article content",
+          detail: captureError instanceof Error ? captureError.message : undefined,
+        },
+        { status: 502 },
+      );
+    }
+
+    const prompt = buildContextVectorPrompt(String(analysisText || ""), articlePlain);
 
     const response = await openai.responses.parse({
       model: "gpt-5-mini-2025-08-07",
