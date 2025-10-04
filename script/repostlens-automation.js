@@ -1,657 +1,386 @@
-// RepostLens automation script (namespaced) — processes Search Console rows and writes results to an output sheet.
+// RepostLens automation script (optimized for activeSheet processing)
 const RepostLensAutomation = (() => {
-  const TARGET_SHEET_NAME = ''; // 留空代表使用當前分頁
-  const OUTPUT_SHEET_SUFFIX = ' (Automation Output)';
-  const PROCESSED_SHEET_SUFFIX = ' (Processed)';
-  const OUTPUT_HEADERS = [
-    'URL',
-    'Result',
-    'Adjustments Preview',
-    'Outline Summary',
-    'Doc Link',
-    'Analysis Markdown'
-  ];
-  const BATCH_SIZE = 3;
-  const ENABLE_DOC_EXPORT = false;
-
-  const PATH_CONTEXT_VECTOR = '/api/report/context-vector';
-  const PATH_ANALYZE = '/api/optimize/analyze';
-  const PATH_SEARCH_BY_URL = '/api/search/by-url';
-  const PATH_OUTLINE = '/api/report/outline';
-
-  const COL_URL = 1;
-
-  const MAX_CELL_LENGTH = 50000;
-  const SAFE_CELL_LENGTH = 49000;
-  const COL_CONTEXT_VECTOR = 2;
-  const COL_ANALYSIS = 3;
-  const COL_DOC_BODY = 4;
-  const COL_DOC_LINK = 5;
-
-  const REPORT_API_BASE = (() => {
-    try {
-      return PropertiesService.getScriptProperties().getProperty('REPORT_API_BASE') || '';
-    } catch (e) {
-      return '';
-    }
-  })();
-
-  const DEBUG = true;
+  const OUTPUT_HEADERS = ['URL', 'Result', 'Adjustments Preview', 'Outline Summary', 'Doc Link', 'Analysis Markdown'];
+  const BATCH_SIZE = 10;
+  const API_BASE = PropertiesService.getScriptProperties().getProperty('REPORT_API_BASE') || '';
 
   const dlog = (msg) => {
-    if (!DEBUG) return;
     try {
       Logger.log(String(msg));
+      console.log(String(msg));
     } catch (e) {
       // ignore
     }
   };
 
-  const trunc = (s, n = 200) => {
-    const str = String(s || '');
-    return str.length <= n ? str : `${str.slice(0, n)}...`;
-  };
-
   const createMenu = () => {
-    SpreadsheetApp.getUi()
-      .createMenu('RepostLens')
-      .addItem('處理所有列 (Batch 3)', 'RL_AUTO_runForSheet')
+    SpreadsheetApp.getUi().createMenu('RepostLens')
+      .addItem('處理所有列 (Batch 10)', 'RL_AUTO_runForSheet')
       .addItem('處理當前列 (Force)', 'RL_AUTO_runForActiveRow')
+      .addSeparator()
+      .addItem('設定自動觸發器 (每3分鐘)', 'RL_AUTO_createTrigger')
+      .addItem('刪除自動觸發器', 'RL_AUTO_deleteTrigger')
       .addToUi();
-    dlog('[onOpen] REPORT_API_BASE=' + REPORT_API_BASE);
   };
 
   const getTargetSheet = () => {
     const ss = SpreadsheetApp.getActiveSpreadsheet();
-    if (!TARGET_SHEET_NAME) return ss.getActiveSheet();
-    const sheet = ss.getSheetByName(TARGET_SHEET_NAME);
-    if (!sheet) {
-      SpreadsheetApp.getUi().alert(`找不到分頁 "${TARGET_SHEET_NAME}"`);
-      return null;
+
+    // 嘗試從 PropertiesService 獲取儲存的 sheet 名稱（用於觸發器）
+    try {
+      const savedSheetName = PropertiesService.getScriptProperties().getProperty('RL_AUTO_TARGET_SHEET');
+      if (savedSheetName) {
+        const sheet = ss.getSheetByName(savedSheetName);
+        if (sheet) {
+          dlog(`[getTargetSheet] 使用已儲存的 sheet: ${savedSheetName}`);
+          return sheet;
+        }
+      }
+    } catch (e) {
+      dlog(`[getTargetSheet] 無法取得已儲存的 sheet: ${e.message}`);
     }
-    return sheet;
+
+    // 嘗試使用當前活動的 sheet
+    try {
+      const activeSheet = ss.getActiveSheet();
+      dlog(`[getTargetSheet] 使用活動 sheet: ${activeSheet.getName()}`);
+      return activeSheet;
+    } catch (e) {
+      dlog(`[getTargetSheet] 無法取得活動 sheet，使用第一個 sheet: ${e.message}`);
+      return ss.getSheets()[0];
+    }
+  };
+
+  const createTrigger = () => {
+    const sheet = SpreadsheetApp.getActiveSheet();
+    PropertiesService.getScriptProperties().setProperty('RL_AUTO_TARGET_SHEET', sheet.getName());
+
+    ScriptApp.getProjectTriggers().forEach(t => {
+      if (t.getHandlerFunction() === 'RL_AUTO_runForSheet') ScriptApp.deleteTrigger(t);
+    });
+
+    ScriptApp.newTrigger('RL_AUTO_runForSheet').timeBased().everyMinutes(3).create();
+    SpreadsheetApp.getActive().toast(`已設定觸發器 (${sheet.getName()})`, 'RepostLens', 3);
+  };
+
+  const deleteTrigger = () => {
+    let count = 0;
+    ScriptApp.getProjectTriggers().forEach(t => {
+      if (t.getHandlerFunction() === 'RL_AUTO_runForSheet') {
+        ScriptApp.deleteTrigger(t);
+        count++;
+      }
+    });
+    PropertiesService.getScriptProperties().deleteProperty('RL_AUTO_TARGET_SHEET');
+    SpreadsheetApp.getActive().toast(`已刪除 ${count} 個觸發器`, 'RepostLens', 3);
   };
 
   const runForSheet = () => {
     const sheet = getTargetSheet();
-    if (!sheet) return;
-    const lastRow = sheet.getLastRow();
-    if (lastRow < 2) {
-      SpreadsheetApp.getUi().alert('當前分頁沒有資料列');
+    if (!sheet || sheet.getLastRow() < 2) {
+      dlog('[runForSheet] 沒有資料或 sheet 不存在');
       return;
     }
 
-    const outputSheet = ensureOutputSheet(sheet);
-    const processedUrlSet = getProcessedUrlSet(outputSheet);
-    const ctx = { outputSheet, processedUrlSet, force: false };
+    dlog(`[runForSheet] 開始處理 sheet: ${sheet.getName()}, 總列數: ${sheet.getLastRow()}`);
 
-    let processedCount = 0;
-    for (let row = 2; row <= lastRow && processedCount < BATCH_SIZE; row += 1) {
-      const success = processRow(sheet, row, ctx);
-      if (success) processedCount += 1;
+    const output = getOutputSheet(sheet);
+    const processed = new Set(output.getRange(2, 1, Math.max(1, output.getLastRow() - 1), 2)
+      .getValues().filter(([url, result]) => url && result && !result.toString().startsWith('ERROR:'))
+      .map(([url]) => url.toString().trim()));
+
+    dlog(`[runForSheet] 已處理 URL 數量: ${processed.size}`);
+
+    // 收集待處理的資料
+    const pendingRows = [];
+    for (let row = 2; row <= sheet.getLastRow(); row++) {
+      const url = String(sheet.getRange(row, 1).getValue() || '').trim();
+      if (!url || processed.has(url)) continue;
+      pendingRows.push({ url, row });
     }
 
-    const message = processedCount
-      ? `完成 ${processedCount} 筆資料`
-      : '沒有新的資料需要處理';
-    SpreadsheetApp.getActive().toast(message, 'RepostLens Automation', 5);
+    if (pendingRows.length === 0) {
+      SpreadsheetApp.getActive().toast('沒有新資料需要處理', 'RepostLens', 3);
+      return;
+    }
+
+    // 取一個 batch (3筆)
+    const batch = pendingRows.slice(0, BATCH_SIZE);
+    dlog(`[runForSheet] 開始併發處理 batch: ${batch.length} 筆`);
+    SpreadsheetApp.getActive().toast(`併發處理 ${batch.length} 筆資料...`, 'RepostLens', 2);
+
+    // 併發處理
+    const results = processBatchConcurrent(batch, sheet, output);
+
+    const successCount = results.filter(r => r.success).length;
+    const failCount = results.filter(r => !r.success).length;
+
+    const message = `完成 batch: 成功 ${successCount} 筆, 失敗 ${failCount} 筆 (剩餘 ${pendingRows.length - batch.length} 筆)`;
+    dlog(`[runForSheet] ${message}`);
+    SpreadsheetApp.getActive().toast(message, 'RepostLens', 5);
+  };
+
+  const processBatchConcurrent = (batch, sheet, output) => {
+    const startTime = Date.now();
+
+    dlog(`[processBatchConcurrent] 開始批次處理 ${batch.length} 筆資料`);
+    SpreadsheetApp.getActive().toast(`批次處理 ${batch.length} 筆資料...`, 'RepostLens', 2);
+
+    try {
+      // 準備批次資料
+      const batchData = batch.map(({ url, row }) => {
+        const rowData = getRowDataForRow(sheet, row);
+        const analyzeInput = buildAnalyzeInputFromSheet(rowData, url);
+        return {
+          url,
+          row,
+          ...analyzeInput
+        };
+      });
+
+      dlog(`[processBatchConcurrent] 調用批次 API，資料: ${JSON.stringify(batchData).slice(0, 300)}...`);
+
+      // 調用批次 API
+      const batchResults = callAPI('/api/batch-process', {
+        batch: batchData
+      });
+
+      dlog(`[processBatchConcurrent] 批次 API 成功，結果數量: ${batchResults?.results?.length || 0}`);
+
+      // 處理結果並寫入 sheet
+      const results = [];
+      if (batchResults?.results && Array.isArray(batchResults.results)) {
+        batchResults.results.forEach((result, index) => {
+          const { url, row } = batch[index];
+
+          try {
+            if (result.success) {
+              // 解析 outline
+              const outlineEntries = parseOutlineEntries(result.outline || '');
+
+              // 寫入成功結果
+              output.appendRow([
+                url,
+                'SUCCESS',
+                formatSuggestions(result.suggestions),
+                formatOutlineSummary(outlineEntries),
+                '',
+                result.analysis || ''
+              ]);
+
+              results.push({ url, row, success: true, error: null });
+              dlog(`[processBatchConcurrent] 成功處理: ${url}`);
+            } else {
+              // 寫入錯誤結果
+              const errorMsg = `ERROR: ${result.error || '未知錯誤'}`;
+              output.appendRow([url, errorMsg, '', '', '', '']);
+              results.push({ url, row, success: false, error: result.error });
+              dlog(`[processBatchConcurrent] 處理失敗: ${url} - ${result.error}`);
+            }
+          } catch (e) {
+            const errorMsg = `ERROR: 結果處理失敗 - ${e.message}`;
+            output.appendRow([url, errorMsg, '', '', '', '']);
+            results.push({ url, row, success: false, error: e.message });
+            dlog(`[processBatchConcurrent] 結果處理失敗: ${url} - ${e.message}`);
+          }
+        });
+      } else {
+        // API 回傳格式錯誤
+        batch.forEach(({ url, row }) => {
+          const errorMsg = 'ERROR: 批次 API 回傳格式錯誤';
+          output.appendRow([url, errorMsg, '', '', '', '']);
+          results.push({ url, row, success: false, error: '批次 API 回傳格式錯誤' });
+        });
+      }
+
+      // 統一 flush
+      SpreadsheetApp.flush();
+
+      const duration = (Date.now() - startTime) / 1000;
+      dlog(`[processBatchConcurrent] 批次完成，耗時: ${duration}秒`);
+
+      return results;
+
+    } catch (e) {
+      dlog(`[processBatchConcurrent] 批次處理失敗: ${e.message}`);
+
+      // 所有項目標記為失敗
+      const results = batch.map(({ url, row }) => {
+        const errorMsg = `ERROR: 批次處理失敗 - ${e.message}`;
+        output.appendRow([url, errorMsg, '', '', '', '']);
+        return { url, row, success: false, error: e.message };
+      });
+
+      SpreadsheetApp.flush();
+      return results;
+    }
   };
 
   const runForActiveRow = () => {
-    const sheet = getTargetSheet();
-    if (!sheet) return;
-
-    const activeSheet = SpreadsheetApp.getActiveSheet();
-    if (activeSheet.getName() !== sheet.getName()) {
-      SpreadsheetApp.getUi().alert('請切換到欲處理的分頁再執行');
-      return;
-    }
-
-    const activeCell = activeSheet.getActiveCell();
-    const row = activeCell.getRow();
+    const sheet = SpreadsheetApp.getActiveSheet();
+    const row = sheet.getActiveCell().getRow();
     if (row < 2) {
       SpreadsheetApp.getUi().alert('請選擇第 2 列以後的資料列');
       return;
     }
 
-    const outputSheet = ensureOutputSheet(sheet);
-    const processedUrlSet = getProcessedUrlSet(outputSheet);
-    const ctx = { outputSheet, processedUrlSet, force: true };
+    const url = String(sheet.getRange(row, 1).getValue() || '').trim();
+    if (!url) {
+      SpreadsheetApp.getUi().alert('此列沒有 URL');
+      return;
+    }
 
-    const success = processRow(sheet, row, ctx);
-    const message = success ? '完成 1 筆資料' : '此列無法處理或無效 URL';
-    SpreadsheetApp.getActive().toast(message, 'RepostLens Automation', 5);
+    dlog(`[runForActiveRow] 強制處理第 ${row} 列: ${url}`);
+    SpreadsheetApp.getActive().toast(`處理中: 第${row}列`, 'RepostLens', 2);
+
+    const success = processRow(url, sheet, row, getOutputSheet(sheet));
+    const message = success ? `完成處理第 ${row} 列` : `處理失敗: 第 ${row} 列`;
+
+    dlog(`[runForActiveRow] ${message}`);
+    SpreadsheetApp.getActive().toast(message, 'RepostLens', 3);
   };
 
-  const processRow = (sheet, rowIndex, ctx) => {
-    const outputSheet = ctx.outputSheet;
-    const processedUrlSet = ctx.processedUrlSet;
-    const force = ctx.force === true;
-
-    const urlCell = sheet.getRange(rowIndex, COL_URL);
-    const rawUrl = String(urlCell.getValue() || '').trim();
-    const normalizedUrl = normalizeUrl(rawUrl);
-    const allowSourceUpdate = shouldAllowSourceMutations(sheet);
-
-    if (!normalizedUrl || !isLikelyUrl(normalizedUrl)) {
-      const contextCell = getCellIfAvailable(sheet, rowIndex, COL_CONTEXT_VECTOR);
-      if (allowSourceUpdate && contextCell) setCellValueSafe(contextCell, 'SKIP: 非有效網址');
-      return false;
-    }
-
-    if (!force && processedUrlSet.has(normalizedUrl)) {
-      dlog(`[processRow] skip already processed ${normalizedUrl}`);
-      return false;
-    }
-
-    if (allowSourceUpdate) urlCell.setValue(normalizedUrl);
-
-    const contextCell = getCellIfAvailable(sheet, rowIndex, COL_CONTEXT_VECTOR);
-    const analysisCell = getCellIfAvailable(sheet, rowIndex, COL_ANALYSIS);
-    const docBodyCell = getCellIfAvailable(sheet, rowIndex, COL_DOC_BODY);
-    const docLinkCell = getCellIfAvailable(sheet, rowIndex, COL_DOC_LINK);
-
-    let analyzeData = parseStoredAnalyzeResult(getCellValue(analysisCell));
-    let analysisText = analyzeData?.analysis ? sanitizeMultiline(analyzeData.analysis) : '';
-    const rowData = getRowDataForRow(sheet, rowIndex);
-    const sheetAnalyzeSource = buildAnalyzeInputFromSheet(rowData, normalizedUrl);
-    const sheetDocRow = buildDocSearchRowFromSheet(rowData, normalizedUrl);
-    const sheetArticleText = sanitizeMultiline(pickValue(rowData, ['article_text', 'article_content', 'article']));
-
-    const existingDocPreview = sanitizeMultiline(getCellValue(docBodyCell));
-    const existingContextPreview = sanitizeMultiline(getCellValue(contextCell));
-    const existingDocLink = sanitizeMultiline(getCellValue(docLinkCell));
-
-    if (!force && analysisText && existingDocPreview) {
-      appendOutputRow(outputSheet, {
-        url: normalizedUrl,
-        recommendation: existingDocPreview,
-        adjustments: existingContextPreview,
-        outline: sanitizeMultiline(analyzeData?.sections?.structuralChanges || ''),
-        docLink: existingDocLink,
-        analysis: analysisText,
-      });
-      processedUrlSet.add(normalizedUrl);
-      return true;
-    }
-
+  const processRow = (url, sheet, row, output) => {
     try {
-      const host = parseHostnameFromUrl(normalizedUrl);
-      if (!host) throw new Error('URL 缺少 host');
-      const site = 'sc-domain:' + host.replace(/^www\./, '');
+      dlog(`[processRow] 開始處理: ${url}`);
 
-      const searchRow = callSearchByUrl(site, normalizedUrl);
-      const analyzeInputRow = Object.assign({}, sheetAnalyzeSource, searchRow || {});
-      analyzeInputRow.page = analyzeInputRow.page || normalizedUrl;
-      if (searchRow) {
-        if (allowSourceUpdate) {
-          try { urlCell.setNote('Source: ' + PATH_SEARCH_BY_URL); } catch (e) { /* ignore */ }
-        }
-      } else if (allowSourceUpdate && contextCell) {
-        contextCell.setNote('search.by-url 無資料，改用頁面內容分析');
-      }
+      // 從 sheet 讀取資料構建 API 請求
+      const rowData = getRowDataForRow(sheet, row);
+      const analyzeInput = buildAnalyzeInputFromSheet(rowData, url);
+      dlog(`[processRow] 構建 analyze 輸入: ${JSON.stringify(analyzeInput).slice(0, 200)}...`);
 
-      if (!analysisText || force) {
-        const freshAnalysis = callOptimizeAnalyze(analyzeInputRow, normalizedUrl);
-        analysisText = sanitizeMultiline(freshAnalysis.analysis || '');
-        analyzeData = prepareAnalyzeDataForStorage(freshAnalysis);
-        if (allowSourceUpdate && analysisCell && analyzeData) {
-          const serialized = JSON.stringify(analyzeData);
-          const stored = setCellValueSafe(analysisCell, serialized, MAX_CELL_LENGTH, { truncate: false });
-          if (!stored) {
-            analysisCell.setValue('ANALYSIS_TOO_LARGE');
-            try { analysisCell.setNote('analysis payload exceeded 50k chars; rerun to regenerate'); } catch (e) { /* ignore */ }
-          } else {
-            try { analysisCell.setNote('Source: ' + PATH_ANALYZE); } catch (e) { /* ignore */ }
-          }
-        }
-      }
+      // 調用 analyze API
+      dlog(`[processRow] 調用 analyze API...`);
+      const analysis = callAPI('/api/optimize/analyze', analyzeInput);
+      if (!analysis?.analysis) throw new Error('無分析結果');
+      dlog(`[processRow] analyze API 成功，分析長度: ${analysis.analysis.length}`);
 
-      if (!analysisText) {
-        if (allowSourceUpdate && contextCell) setCellValueSafe(contextCell, 'SKIP: 無分析內容');
-        appendOutputRow(outputSheet, {
-          url: normalizedUrl,
-          recommendation: 'ERROR: 無分析內容',
-          adjustments: '',
-          outline: '',
-          docLink: existingDocLink,
-          analysis: '',
-        });
-        return false;
-      }
-
-      const fallbackArticleText = sheetArticleText || (!searchRow ? fetchArticleText(normalizedUrl) : null);
-
-      let contextResult;
-      let contextNote = null;
-      try {
-        contextResult = callReportApi(normalizedUrl, analysisText, fallbackArticleText);
-        dlog(`[processRow] context-vector success: ${contextResult.suggestions.length} suggestions`);
-      } catch (error) {
-        const message = error && error.message ? String(error.message) : String(error);
-        contextResult = { suggestions: [], markdown: 'Context vector 未生成' };
-        contextNote = `context-vector skipped: ${message}`.slice(0, 500);
-        dlog(`[processRow] context-vector fallback: ${message}`);
-      }
-      if (allowSourceUpdate && contextNote && contextCell) {
-        try { contextCell.setNote(contextNote); } catch (e) { /* ignore */ }
-      }
-      const outline = callOutlineApi(analysisText);
-      const docSections = prepareDocSections({
-        pageUrl: normalizedUrl,
-        searchRow: searchRow || sheetDocRow,
-        outline,
-        analyzeData,
-        contextResult,
+      // 調用 context-vector API
+      dlog(`[processRow] 調用 context-vector API...`);
+      const context = callAPI('/api/report/context-vector', {
+        pageUrl: url,
+        analysisText: analysis.analysis
       });
+      dlog(`[processRow] context-vector API 成功，建議數量: ${context?.suggestions?.length || 0}`);
 
-      const contextText = buildAdjustmentsPreviewText(docSections.adjustmentsTable);
-      if (allowSourceUpdate && contextCell) setCellValueSafe(contextCell, contextText);
-
-      const docPreview = buildDocPreviewText(docSections);
-      if (allowSourceUpdate && docBodyCell) setCellValueSafe(docBodyCell, docPreview);
-
-      const docName = `RepostLens Draft - ${searchRow?.best_query || sheetDocRow.best_query || host}`;
-      let docUrl = existingDocLink;
-      if (ENABLE_DOC_EXPORT && allowSourceUpdate && docLinkCell) {
-        docUrl = upsertDocumentWithSections(docLinkCell, docName, docSections, true);
-      }
-
-      appendOutputRow(outputSheet, {
-        url: normalizedUrl,
-        recommendation: docPreview,
-        adjustments: contextText,
-        outline: formatOutlineSummary(docSections.outlineEntries),
-        docLink: docUrl || existingDocLink,
-        analysis: analysisText,
+      // 調用 outline API
+      dlog(`[processRow] 調用 outline API...`);
+      const outlineResponse = callAPI('/api/report/outline', {
+        analyzeResult: analysis.analysis
       });
+      const outline = String(outlineResponse?.outline || '');
+      dlog(`[processRow] outline API 成功，outline 長度: ${outline.length}`);
 
-      processedUrlSet.add(normalizedUrl);
+      // 輸出結果
+      dlog(`[processRow] outline 原始資料: ${JSON.stringify(outline).slice(0, 300)}...`);
+      const outlineEntries = parseOutlineEntries(outline);
+      dlog(`[processRow] 解析後的 outlineEntries: ${JSON.stringify(outlineEntries).slice(0, 300)}...`);
+      const formattedOutline = formatOutlineSummary(outlineEntries);
+      dlog(`[processRow] 格式化後的 outline: ${formattedOutline.slice(0, 200)}...`);
 
-      if (rowIndex < sheet.getLastRow()) Utilities.sleep(600);
+      output.appendRow([
+        url, 'SUCCESS',
+        formatSuggestions(context?.suggestions),
+        formattedOutline,
+        '', analysis.analysis
+      ]);
+      dlog(`[processRow] 成功完成: ${url}`);
       return true;
-    } catch (err) {
-      const message = err && err.message ? err.message : String(err);
-      dlog(`[processRow] ERROR row=${rowIndex} ${message}`);
-      if (allowSourceUpdate && docBodyCell) setCellValueSafe(docBodyCell, `ERROR: ${message}`);
-      appendOutputRow(outputSheet, {
-        url: normalizedUrl,
-        recommendation: `ERROR: ${message}`,
-        adjustments: '',
-        outline: '',
-        docLink: '',
-        analysis: analysisText,
-      });
+    } catch (e) {
+      const errorMsg = `ERROR: ${e.message}`;
+      dlog(`[processRow] 處理失敗 ${url}: ${errorMsg}`);
+      output.appendRow([url, errorMsg, '', '', '', '']);
       return false;
     }
   };
 
-  const getCellIfAvailable = (sheet, row, column) => {
-    if (column > sheet.getMaxColumns()) return null;
-    return sheet.getRange(row, column);
+  const callAPI = (path, data) => {
+    const url = API_BASE + path;
+    dlog(`[callAPI] 調用: ${path}`);
+
+    const res = UrlFetchApp.fetch(url, {
+      method: 'POST',
+      contentType: 'application/json',
+      payload: JSON.stringify(data),
+      muteHttpExceptions: true
+    });
+
+    const responseCode = res.getResponseCode();
+    dlog(`[callAPI] ${path} 回應: ${responseCode}`);
+
+    if (responseCode !== 200) {
+      const errorText = res.getContentText();
+      dlog(`[callAPI] ${path} 錯誤內容: ${errorText.slice(0, 200)}`);
+      throw new Error(`API ${responseCode}: ${errorText.slice(0, 100)}`);
+    }
+
+    return JSON.parse(res.getContentText());
   };
 
-  const getCellValue = (cell) => (cell ? cell.getValue() : '');
-
-  const ensureOutputSheet = (sourceSheet) => {
-    const ss = sourceSheet.getParent();
-    const name = `${sourceSheet.getName()}${OUTPUT_SHEET_SUFFIX}`;
+  const getOutputSheet = (source) => {
+    const ss = source.getParent();
+    const name = `${source.getName()} (Automation Output)`;
     let sheet = ss.getSheetByName(name);
-    if (!sheet) sheet = ss.insertSheet(name);
-    ensureOutputHeaders(sheet);
-    if (sheet.getFrozenRows() < 1) sheet.setFrozenRows(1);
+    if (!sheet) {
+      sheet = ss.insertSheet(name);
+      sheet.getRange(1, 1, 1, OUTPUT_HEADERS.length).setValues([OUTPUT_HEADERS]);
+      sheet.setFrozenRows(1);
+    }
     return sheet;
   };
 
-  const ensureOutputHeaders = (sheet) => {
-    if (sheet.getMaxColumns() < OUTPUT_HEADERS.length) {
-      sheet.insertColumnsAfter(sheet.getMaxColumns(), OUTPUT_HEADERS.length - sheet.getMaxColumns());
-    }
-    const range = sheet.getRange(1, 1, 1, OUTPUT_HEADERS.length);
-    const current = range.getValues()[0];
-    let identical = true;
-    for (let i = 0; i < OUTPUT_HEADERS.length; i += 1) {
-      if (String(current[i] || '') !== OUTPUT_HEADERS[i]) {
-        identical = false;
-        break;
-      }
-    }
-    if (!identical) {
-      range.setValues([OUTPUT_HEADERS]);
-    }
-  };
-
-  const getProcessedUrlSet = (sheet) => {
-    const set = new Set();
-    const lastRow = sheet.getLastRow();
-    if (lastRow < 2) return set;
-    const rows = sheet.getRange(2, 1, lastRow - 1, 2).getValues();
-    rows.forEach(([url, result]) => {
-      const trimmedUrl = String(url || '').trim();
-      const resultText = String(result || '').trim();
-      if (!trimmedUrl) return;
-      if (/^ERROR:/i.test(resultText)) return;
-      set.add(trimmedUrl);
-    });
-    return set;
-  };
-
-  const appendOutputRow = (sheet, data) => {
-    const rowValues = [
-      data.url || '',
-      truncateForCell(data.recommendation, 9000),
-      truncateForCell(data.adjustments, 6000),
-      truncateForCell(data.outline, 6000),
-      data.docLink || '',
-      truncateForCell(data.analysis, 20000),
-    ];
-    sheet.appendRow(rowValues);
-    SpreadsheetApp.flush();
-  };
-
-  const truncateForCell = (value, maxLen = 20000) => {
-    if (value === null || value === undefined) return '';
-    const str = String(value);
-    if (str.length <= maxLen) return str;
-    return str.slice(0, maxLen - 1) + '…';
-  };
-
-  const setCellValueSafe = (cell, value, maxLength = SAFE_CELL_LENGTH, options = {}) => {
-    if (!cell) return false;
-    const str = value === null || value === undefined ? '' : String(value);
-    const opts = Object.assign({ truncate: true, note: null }, options);
-    if (!str) {
-      cell.clearContent();
-      if (opts.note) { try { cell.setNote(opts.note); } catch (e) { /* ignore */ } }
-      return true;
-    }
-    if (str.length <= maxLength) {
-      cell.setValue(str);
-      if (opts.note) { try { cell.setNote(opts.note); } catch (e) { /* ignore */ } }
-      return true;
-    }
-    if (!opts.truncate) return false;
-    const truncated = str.slice(0, maxLength - 1) + '…';
-    cell.setValue(truncated);
-    if (opts.note) { try { cell.setNote(opts.note); } catch (e) { /* ignore */ } }
-    return true;
+  const formatSuggestions = (suggestions) => {
+    if (!Array.isArray(suggestions)) return '';
+    return suggestions.map((s, i) =>
+      `${i + 1}. ${s.before || ''}\n   建議: ${s.afterAdjust || s.adjustAsFollows || ''}`
+    ).join('\n\n');
   };
 
   const formatOutlineSummary = (outlineEntries) => {
-    if (!Array.isArray(outlineEntries) || !outlineEntries.length) return '';
-    const sections = [];
-    let current = null;
-    outlineEntries.forEach((entry) => {
-      const level = Number(entry?.level) || 0;
-      const text = sanitizeString(entry?.text);
-      if (!text) return;
-      if (level <= 2) {
-        if (current) sections.push(current);
-        current = { title: text, items: [] };
-      } else {
-        if (!current) current = { title: '其他重點', items: [] };
-        current.items.push(text);
-      }
-    });
-    if (current) sections.push(current);
-    return sections
-      .map((section) => {
-        const titleLine = `• ${section.title}`;
-        if (!section.items.length) return titleLine;
-        const children = section.items.map((item) => `   - ${item}`).join('\n');
-        return `${titleLine}\n${children}`;
-      })
-      .join('\n');
-  };
-
-  const parseStoredAnalyzeResult = (value) => {
-    if (!value) return null;
     try {
-      if (typeof value === 'string') {
-        const trimmed = value.trim();
-        if (!trimmed) return null;
-        return JSON.parse(trimmed);
+      if (!Array.isArray(outlineEntries) || !outlineEntries.length) {
+        dlog(`[formatOutlineSummary] 輸入不是陣列或為空: ${typeof outlineEntries}, length: ${outlineEntries?.length}`);
+        return '';
       }
-      return typeof value === 'object' ? value : null;
-    } catch (e) {
-      return null;
-    }
-  };
 
-  const callSearchByUrl = (site, pageUrl) => {
-    const endpoint = getReportBase() + PATH_SEARCH_BY_URL;
-    const res = UrlFetchApp.fetch(endpoint, {
-      method: 'post',
-      contentType: 'application/json',
-      payload: JSON.stringify({ site, page: String(pageUrl || '').replace(/\s+/g, '') }),
-      muteHttpExceptions: true,
-    });
-    dlog(`[callSearchByUrl] rc=${res.getResponseCode()} body=${trunc(res.getContentText(), 160)}`);
-    if (res.getResponseCode() < 200 || res.getResponseCode() >= 300) {
-      throw new Error(`search.by-url 錯誤: HTTP ${res.getResponseCode()}`);
-    }
-    const data = safeJson(res.getContentText());
-    return Array.isArray(data) && data.length ? data[0] : null;
-  };
-
-  const callOptimizeAnalyze = (row, pageUrl) => {
-    const source = row || {};
-    const endpoint = getReportBase() + PATH_ANALYZE;
-    const payload = {
-      page: pageUrl || source.page,
-      bestQuery: source.best_query,
-      bestQueryClicks: toNumberOrNull(source.best_query_clicks),
-      bestQueryPosition: toNumberOrNull(source.best_query_position),
-      prevBestQuery: source.prev_best_query,
-      prevBestPosition: toNumberOrNull(source.prev_best_position),
-      prevBestClicks: toNumberOrNull(source.prev_best_clicks),
-      rank1: source.rank_1,
-      rank2: source.rank_2,
-      rank3: source.rank_3,
-      rank4: source.rank_4,
-      rank5: source.rank_5,
-      rank6: source.rank_6,
-      rank7: source.rank_7,
-      rank8: source.rank_8,
-      rank9: source.rank_9,
-      rank10: source.rank_10,
-    };
-    if (!payload.page) throw new Error('optimize.analyze 缺少 page');
-    const res = UrlFetchApp.fetch(endpoint, {
-      method: 'post',
-      contentType: 'application/json',
-      payload: JSON.stringify(payload),
-      muteHttpExceptions: true,
-    });
-    dlog(`[callOptimizeAnalyze] rc=${res.getResponseCode()} body=${trunc(res.getContentText(), 160)}`);
-    if (res.getResponseCode() < 200 || res.getResponseCode() >= 300) {
-      throw new Error(`optimize.analyze 錯誤: HTTP ${res.getResponseCode()}`);
-    }
-    const json = safeJson(res.getContentText());
-    if (!json || json.success !== true) throw new Error('optimize.analyze 失敗');
-    return json;
-  };
-
-  const callReportApi = (pageUrl, analysisText, articleText) => {
-    const endpoint = getReportBase() + PATH_CONTEXT_VECTOR;
-    const payload = {
-      pageUrl: String(pageUrl || '').replace(/\s+/g, ''),
-      analysisText,
-    };
-    // Always try to provide article text, either from sheet or by fetching
-    const finalArticleText = articleText || fetchArticleText(pageUrl);
-    if (finalArticleText) {
-      payload.articleText = String(finalArticleText).slice(0, 8000);
-      dlog(`[callReportApi] providing article text: ${finalArticleText.length} chars`);
-    } else {
-      dlog(`[callReportApi] no article text available for ${pageUrl}`);
-    }
-    const res = UrlFetchApp.fetch(endpoint, {
-      method: 'post',
-      contentType: 'application/json',
-      payload: JSON.stringify(payload),
-      muteHttpExceptions: true,
-    });
-    dlog(`[callReportApi] rc=${res.getResponseCode()} body=${trunc(res.getContentText(), 160)}`);
-    if (res.getResponseCode() < 200 || res.getResponseCode() >= 300) {
-      throw new Error(`context-vector 錯誤: HTTP ${res.getResponseCode()}`);
-    }
-    const json = safeJson(res.getContentText());
-    dlog(`[callReportApi] parsed JSON: ${JSON.stringify(json).slice(0, 200)}...`);
-    if (!json || json.success !== true) throw new Error('context-vector 失敗');
-    const result = {
-      suggestions: Array.isArray(json.suggestions) ? json.suggestions : [],
-      markdown: sanitizeMultiline(json.markdown || ''),
-    };
-    dlog(`[callReportApi] returning ${result.suggestions.length} suggestions`);
-    return result;
-  };
-
-  const callOutlineApi = (analysisText) => {
-    const endpoint = getReportBase() + PATH_OUTLINE;
-    const res = UrlFetchApp.fetch(endpoint, {
-      method: 'post',
-      contentType: 'application/json',
-      payload: JSON.stringify({ analyzeResult: String(analysisText || '') }),
-      muteHttpExceptions: true,
-    });
-    dlog(`[callOutlineApi] rc=${res.getResponseCode()} body=${trunc(res.getContentText(), 160)}`);
-    if (res.getResponseCode() < 200 || res.getResponseCode() >= 300) {
-      throw new Error(`report.outline 錯誤: HTTP ${res.getResponseCode()}`);
-    }
-    return sanitizeMultiline(res.getContentText());
-  };
-
-  const prepareAnalyzeDataForStorage = (json) => {
-    if (!json || typeof json !== 'object') return null;
-    return {
-      success: json.success,
-      analysis: sanitizeMultiline(json.analysis || ''),
-      sections: json.sections || null,
-      keywordsAnalyzed: json.keywordsAnalyzed || null,
-      topRankKeywords: json.topRankKeywords || null,
-      rankKeywords: json.rankKeywords || null,
-      previousRankKeywords: json.previousRankKeywords || null,
-      zeroSearchVolumeKeywords: json.zeroSearchVolumeKeywords || null,
-      contentExplorer: json.contentExplorer || null,
-      keywordCoverage: json.keywordCoverage || null,
-      promptBlocks: json.promptBlocks || null,
-    };
-  };
-
-  const prepareDocSections = ({ pageUrl, searchRow, outline, analyzeData, contextResult }) => {
-    const overviewItems = [];
-    if (pageUrl) overviewItems.push(`URL：${decodeURIComponentSafe(pageUrl)}`);
-    if (searchRow) {
-      if (searchRow.best_query) overviewItems.push(`Best Query：${searchRow.best_query}`);
-      if (searchRow.total_clicks !== undefined) {
-        overviewItems.push(`總點擊：${formatNumberDisplay(searchRow.total_clicks)}`);
-        overviewItems.push(`總曝光：${formatNumberDisplay(searchRow.total_impressions)}`);
-        overviewItems.push(`總 CTR：${formatPercentDisplay(searchRow.total_ctr)}`);
-        if (searchRow.best_query_position !== undefined) {
-          overviewItems.push(`最佳關鍵字狀態：點擊 ${formatNumberDisplay(searchRow.best_query_clicks)}｜排名 ${formatNumberDisplay(searchRow.best_query_position, 1)}`);
+      const sections = [];
+      let current = null;
+      outlineEntries.forEach((entry, index) => {
+        dlog(`[formatOutlineSummary] 處理項目 ${index}: ${JSON.stringify(entry)}`);
+        const level = Number(entry?.level) || 0;
+        const text = sanitizeString(entry?.text);
+        if (!text) return;
+        if (level <= 2) {
+          if (current) sections.push(current);
+          current = { title: text, items: [] };
+        } else {
+          if (!current) current = { title: '其他重點', items: [] };
+          current.items.push(text);
         }
-      }
+      });
+      if (current) sections.push(current);
+
+      const result = sections
+        .map((section) => {
+          const titleLine = `• ${String(section.title)}`;
+          if (!section.items.length) return titleLine;
+          const children = section.items.map((item) => `   - ${String(item)}`).join('\n');
+          return `${titleLine}\n${children}`;
+        })
+        .join('\n');
+
+      dlog(`[formatOutlineSummary] 最終結果: ${result.slice(0, 200)}...`);
+      return result;
+    } catch (e) {
+      dlog(`[formatOutlineSummary] 錯誤: ${e.message}`);
+      return `格式化錯誤: ${e.message}`;
     }
-
-    const coverageTable = buildCoverageTableData(analyzeData);
-    const adjustmentsTable = buildAdjustmentsTableData(contextResult);
-    const outlineEntries = parseOutlineEntries(outline);
-
-    return {
-      overviewItems,
-      coverageTable,
-      adjustmentsTable,
-      outlineEntries,
-    };
-  };
-
-  const buildCoverageTableData = (analyzeData) => {
-    if (!analyzeData || !analyzeData.success || !analyzeData.keywordCoverage) return null;
-    const rows = (analyzeData.keywordCoverage.covered || [])
-      .map((row) => [
-        row.text,
-        formatNumberDisplay(row.searchVolume),
-        formatNumberDisplay(row.gsc && row.gsc.clicks),
-        formatNumberDisplay(row.gsc && row.gsc.impressions),
-        formatNumberDisplay(row.gsc && row.gsc.avgPosition, 1),
-      ])
-      .filter((row) => row.some((cell) => cell && cell !== '—'));
-    if (!rows.length) return null;
-    return {
-      title: 'Keyword Coverage — 已覆蓋部分',
-      headers: ['Keyword', 'Search Volume', 'Clicks', 'Impressions', 'Avg Position'],
-      rows,
-    };
-  };
-
-  const buildAdjustmentsTableData = (contextResult) => {
-    const suggestions = Array.isArray(contextResult?.suggestions) ? contextResult.suggestions : [];
-    dlog(`[buildAdjustmentsTableData] ${suggestions.length} suggestions received`);
-    if (!suggestions.length) return null;
-    const rows = suggestions
-      .map((item) => {
-        const before = sanitizeString(item && item.before);
-        const why = sanitizeString(item && item.whyProblemNow);
-        const after = sanitizeMultiline((item && (item.afterAdjust || item.adjustAsFollows)) || '');
-        dlog(`[buildAdjustmentsTableData] processing: before="${before}", why="${why}", after="${after}"`);
-        if (!before || (!why && !after)) return null;
-        const suggestion = [why, after].filter(Boolean).join('\n\n');
-        return [before, suggestion];
-      })
-      .filter(Boolean);
-    dlog(`[buildAdjustmentsTableData] ${rows.length} valid rows created`);
-    if (!rows.length) return null;
-    return {
-      title: 'Content Adjustments',
-      headers: ['原文片段', '修改建議'],
-      rows,
-    };
-  };
-
-  const buildAdjustmentsPreviewText = (table) => {
-    if (!table) return '目前無調整建議';
-    return table.rows
-      .map(([before, suggestion], idx) => `${idx + 1}. 原文片段：${before}\n   修改建議：${suggestion}`)
-      .join('\n\n');
   };
 
   const parseOutlineEntries = (outline) => {
-    if (!outline) return [];
-    let raw = outline;
-    if (typeof raw === 'string') raw = raw.trim();
-
-    try {
-      const parsed = JSON.parse(String(raw));
-      if (parsed && typeof parsed === 'object') {
-        if (typeof parsed.outline === 'string') {
-          raw = parsed.outline;
-        } else if (Array.isArray(parsed.sections)) {
-          return parsed.sections
-            .map((section) => ({
-              level: 2,
-              text: sanitizeString(section?.title || section?.heading || ''),
-              items: Array.isArray(section?.items) ? section.items : [],
-            }))
-            .flatMap((section) => {
-              const rows = [];
-              if (section.text) rows.push({ level: 2, text: section.text });
-              section.items.forEach((item) => {
-                const child = typeof item === 'string' ? item : item?.text || item?.title || '';
-                const cleaned = sanitizeString(child);
-                if (cleaned) rows.push({ level: 3, text: cleaned });
-              });
-              return rows;
-            });
-        }
-      }
-    } catch {
-      // not JSON, continue with raw string
-    }
-
-    const textValue = sanitizeMultiline(raw);
-    if (!textValue) return [];
-    return textValue
+    const text = sanitizeMultiline(outline);
+    if (!text) return [];
+    return text
       .split(/\r?\n/)
       .map((line) => line.trim())
       .filter((line) => line && line !== '## Checklist — 我會做的事')
@@ -664,172 +393,18 @@ const RepostLensAutomation = (() => {
       });
   };
 
-  const buildDocPreviewText = (sections) => {
-    const lines = ['Page Overview'];
-    sections.overviewItems.forEach((item) => lines.push(`- ${item}`));
-    if (sections.coverageTable) {
-      lines.push('', sections.coverageTable.title);
-      lines.push(sections.coverageTable.headers.join(' | '));
-      sections.coverageTable.rows.forEach((row) => lines.push(row.join(' | ')));
-    }
-    if (sections.adjustmentsTable) {
-      lines.push('', sections.adjustmentsTable.title);
-      sections.adjustmentsTable.rows.forEach(([before, suggestion], idx) => {
-        lines.push(`${idx + 1}. 原文片段：${before}`);
-        lines.push(`   修改建議：${suggestion.replace(/\n/g, ' ')}`);
-      });
-    }
-    if (sections.outlineEntries.length) {
-      lines.push('', 'Suggested Outline');
-      sections.outlineEntries.forEach((entry) => {
-        lines.push(`H${entry.level} ${entry.text}`);
-      });
-    }
-    return lines.join('\n').trim();
-  };
-
-  const upsertDocumentWithSections = (docCell, docName, sections, allowWrite = true) => {
-    const existingLink = docCell ? String(docCell.getValue() || '').trim() : '';
-    let docId = extractDocIdFromUrl(existingLink);
-    let doc = null;
-    if (docId) {
-      try { doc = DocumentApp.openById(docId); } catch (e) { doc = null; docId = ''; }
-    }
-    if (!doc) {
-      doc = DocumentApp.create(docName || 'RepostLens Draft');
-    }
-    const body = doc.getBody();
-    body.clear();
-    writeDocSectionsToBody(body, sections);
-    doc.saveAndClose();
-    const url = doc.getUrl();
-    if (allowWrite && docCell) {
-      try { docCell.setValue(url); docCell.setNote('Google Docs 同步：' + url); } catch (e) { /* ignore */ }
-    }
-    return url;
-  };
-
-  const writeDocSectionsToBody = (body, sections) => {
-    body.appendParagraph('Page Overview').setHeading(DocumentApp.ParagraphHeading.HEADING2);
-    sections.overviewItems.forEach((item) => {
-      body.appendListItem(item).setGlyphType(DocumentApp.GlyphType.BULLET);
-    });
-    body.appendParagraph('');
-
-    if (sections.coverageTable) {
-      body.appendParagraph(sections.coverageTable.title).setHeading(DocumentApp.ParagraphHeading.HEADING2);
-      const tableData = [sections.coverageTable.headers, ...sections.coverageTable.rows];
-      const table = body.appendTable(tableData);
-      const headerRow = table.getRow(0);
-      for (let c = 0; c < headerRow.getNumCells(); c += 1) {
-        headerRow.getCell(c).editAsText().setBold(true);
-      }
-      for (let r = 1; r < table.getNumRows(); r += 1) {
-        const row = table.getRow(r);
-        for (let c = 0; c < row.getNumCells(); c += 1) {
-          row.getCell(c).editAsText().setText(sections.coverageTable.rows[r - 1][c]);
-        }
-      }
-      table.setBorderWidth(1);
-      body.appendParagraph('');
-    }
-
-    if (sections.adjustmentsTable) {
-      body.appendParagraph(sections.adjustmentsTable.title).setHeading(DocumentApp.ParagraphHeading.HEADING2);
-      const tableData = [sections.adjustmentsTable.headers, ...sections.adjustmentsTable.rows];
-      const table = body.appendTable(tableData);
-      const headerRow = table.getRow(0);
-      for (let c = 0; c < headerRow.getNumCells(); c += 1) {
-        headerRow.getCell(c).editAsText().setBold(true);
-      }
-      for (let r = 1; r < table.getNumRows(); r += 1) {
-        const row = table.getRow(r);
-        for (let c = 0; c < row.getNumCells(); c += 1) {
-          row.getCell(c).editAsText().setText(sections.adjustmentsTable.rows[r - 1][c]);
-        }
-      }
-      table.setBorderWidth(1);
-      body.appendParagraph('');
-    }
-
-    if (sections.outlineEntries.length) {
-      body.appendParagraph('Suggested Outline').setHeading(DocumentApp.ParagraphHeading.HEADING2);
-      sections.outlineEntries.forEach((entry) => {
-        body.appendParagraph(`H${entry.level} ${entry.text}`)
-          .setHeading(DocumentApp.ParagraphHeading.NORMAL);
-      });
-    }
-  };
-
-  const decodeURIComponentSafe = (url) => {
-    try {
-      return decodeURI(String(url || ''));
-    } catch (e) {
-      return String(url || '');
-    }
-  };
-
-  const formatNumberDisplay = (value, decimals = 0) => {
-    if (value === null || value === undefined || value === '') return '—';
-    const num = typeof value === 'number' ? value : toNumberOrNull(value);
-    if (num === null) return '—';
-    return num.toLocaleString(undefined, {
-      minimumFractionDigits: decimals,
-      maximumFractionDigits: decimals,
-    });
-  };
-
-  const formatPercentDisplay = (value) => {
-    const num = toNumberOrNull(value);
-    return num === null ? '—' : `${num.toFixed(2)}%`;
-  };
-
-  const extractDocIdFromUrl = (url) => {
-    const match = String(url || '').match(/(?:\/d\/|id=)([A-Za-z0-9_-]{10,})/);
-    return match ? match[1] : '';
-  };
-
   const sanitizeString = (value) => (typeof value === 'string' ? value.trim() : '');
 
   const sanitizeMultiline = (value) => (value ? String(value).trim().replace(/\s+$/g, '') : '');
 
+
+
+  // 保留必要的輔助函數
   const toNumberOrNull = (value) => {
     if (value === null || value === undefined || value === '') return null;
     if (typeof value === 'number') return isFinite(value) ? value : null;
     const num = Number(String(value).replace(/[^\d.+-]/g, ''));
     return isFinite(num) ? num : null;
-  };
-
-  const getReportBase = () => {
-    if (!REPORT_API_BASE) throw new Error('請在 Script properties 設定 REPORT_API_BASE');
-    return REPORT_API_BASE.replace(/\/$/, '');
-  };
-
-  const isLikelyUrl = (s) => {
-    if (!s) return false;
-    const str = String(s).trim();
-    return /^https?:\/\//i.test(str) && !!parseHostnameFromUrl(str);
-  };
-
-  const parseHostnameFromUrl = (s) => {
-    const match = String(s || '').match(/^https?:\/\/([^\/?#]+)/i);
-    return match ? match[1] : null;
-  };
-
-  const normalizeUrl = (s) => {
-    let v = String(s || '')
-      .trim()
-      .replace(/[\s\u00A0]+$/g, '')
-      .replace(/[\,\uFF0C\u3001\;\uFF1B\u3002]+$/g, '')
-      .replace(/^["']+|["']+$/g, '');
-    if (!v) return '';
-    if (!/^https?:\/\//i.test(v) && v.includes('.') && !v.includes(' ')) v = 'https://' + v;
-    try { v = decodeURI(v); } catch (e) { /* ignore */ }
-    try { return encodeURI(v); } catch (e) { return v; }
-  };
-
-  const safeJson = (s) => {
-    try { return JSON.parse(s); } catch (e) { return null; }
   };
 
   const isNonEmpty = (value) => {
@@ -844,7 +419,26 @@ const RepostLensAutomation = (() => {
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, '_')
       .replace(/^_+|_+$/g, '');
-    return normalized;
+
+    // 特殊處理一些常見的欄位名稱
+    const mappings = {
+      'best_query': 'best_query',
+      'best_query_clicks': 'best_query_clicks',
+      'best_query_position': 'best_query_position',
+      'best_query_volume': 'best_query_volume',
+      'prev_best_query': 'prev_best_query',
+      'prev_best_clicks': 'prev_best_clicks',
+      'prev_best_position': 'prev_best_position',
+      'prev_main_keyword': 'prev_main_keyword',
+      'prev_keyword_rank': 'prev_keyword_rank',
+      'prev_keyword_traffic': 'prev_keyword_traffic',
+      'total_clicks': 'total_clicks',
+      'keywords_1_10_count': 'keywords_1_10_count',
+      'keywords_4_10_count': 'keywords_4_10_count',
+      'total_keywords': 'total_keywords'
+    };
+
+    return mappings[normalized] || normalized;
   };
 
   const sheetHeaderCache = new Map();
@@ -898,98 +492,51 @@ const RepostLensAutomation = (() => {
       if (number !== null && number !== undefined) source[target] = number;
     };
 
-    setString('best_query', ['best_query', 'current_best_query', 'main_keyword']);
-    setNumber('best_query_clicks', ['best_query_clicks', 'current_best_query_clicks']);
-    setNumber('best_query_position', ['best_query_position', 'current_best_query_position']);
-    setNumber('best_query_volume', ['best_query_volume']);
+    // 對應你的欄位名稱
+    setString('bestQuery', ['best_query', 'Best Query']);
+    setNumber('bestQueryClicks', ['best_query_clicks', 'Best Query Clicks']);
+    setNumber('bestQueryPosition', ['best_query_position', 'Best Query Position']);
+    setNumber('bestQueryVolume', ['best_query_volume', 'Best Query Volume']);
 
-    setString('prev_best_query', ['prev_best_query']);
-    setNumber('prev_best_clicks', ['prev_best_clicks']);
-    setNumber('prev_best_position', ['prev_best_position']);
-    setString('prev_main_keyword', ['prev_main_keyword']);
-    setNumber('prev_keyword_rank', ['prev_keyword_rank']);
-    setNumber('prev_keyword_traffic', ['prev_keyword_traffic']);
+    setString('prevBestQuery', ['prev_best_query', 'Prev Best Query']);
+    setNumber('prevBestClicks', ['prev_best_clicks', 'Prev Best Clicks']);
+    setNumber('prevBestPosition', ['prev_best_position', 'Prev Best Position']);
+    setString('prevMainKeyword', ['prev_main_keyword', 'Prev Main Keyword']);
+    setNumber('prevKeywordRank', ['prev_keyword_rank', 'Prev Keyword Rank']);
+    setNumber('prevKeywordTraffic', ['prev_keyword_traffic', 'Prev Keyword Traffic']);
 
-    for (let i = 1; i <= 10; i += 1) {
-      const key = `rank_${i}`;
-      const value = pickValue(rowData, [key, `current_rank_${i}`]);
+    // 總計數據
+    setNumber('totalClicks', ['total_clicks', 'Total Clicks']);
+    setNumber('keywords1to10Count', ['keywords_1_10_count', 'Keywords 1-10 Count']);
+    setNumber('keywords4to10Count', ['keywords_4_10_count', 'Keywords 4-10 Count']);
+    setNumber('totalKeywords', ['total_keywords', 'Total Keywords']);
+
+    // Rank 1-10 資料
+    for (let i = 1; i <= 10; i++) {
+      const key = `rank${i}`;
+      const value = pickValue(rowData, [
+        `rank_${i}`,
+        `current_rank_${i}`,
+        `Current Rank ${i}`,
+        `Rank ${i}`
+      ]);
       if (isNonEmpty(value)) source[key] = String(value);
     }
-    const gt10 = pickValue(rowData, ['rank_gt10', 'current_rank_gt10']);
-    if (isNonEmpty(gt10)) source.rank_gt10 = String(gt10);
 
+    // Rank >10 資料
+    const rankGt10 = pickValue(rowData, ['rank_gt10', 'current_rank_gt10', 'Current Rank >10']);
+    if (isNonEmpty(rankGt10)) source.rankGt10 = String(rankGt10);
+
+    dlog(`[buildAnalyzeInputFromSheet] 構建的輸入: ${JSON.stringify(source, null, 2)}`);
     return source;
-  };
-
-  const buildDocSearchRowFromSheet = (rowData, pageUrl) => {
-    const base = buildAnalyzeInputFromSheet(rowData, pageUrl);
-    const setNumber = (target, keys) => {
-      const value = pickValue(rowData, keys);
-      const number = toNumberOrNull(value);
-      if (number !== null && number !== undefined) base[target] = number;
-    };
-    setNumber('total_clicks', ['total_clicks']);
-    setNumber('total_impressions', ['total_impressions']);
-    setNumber('total_ctr', ['total_ctr']);
-    setNumber('keywords_1to10_count', ['keywords_1to10_count']);
-    setNumber('keywords_4to10_count', ['keywords_4to10_count']);
-    setNumber('total_keywords', ['total_keywords']);
-    return base;
-  };
-
-  const htmlToPlainText = (html, maxLength) => {
-    if (!html) return '';
-    const cleaned = String(html)
-      .replace(/<script[\s\S]*?<\/script>/gi, '')
-      .replace(/<style[\s\S]*?<\/style>/gi, '')
-      .replace(/<\/(p|div|h[1-6]|li|br)>/gi, '\n')
-      .replace(/<li>/gi, '- ')
-      .replace(/<[^>]+>/g, '')
-      .replace(/&nbsp;/g, ' ')
-      .replace(/&amp;/g, '&')
-      .replace(/&lt;/g, '<')
-      .replace(/&gt;/g, '>');
-    return maxLength ? cleaned.slice(0, maxLength) : cleaned;
-  };
-
-  const fetchArticleText = (url) => {
-    if (!isLikelyUrl(url)) return null;
-    try {
-      const res = UrlFetchApp.fetch(url, {
-        method: 'get',
-        followRedirects: true,
-        muteHttpExceptions: true,
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (compatible; RepostLensBot/1.0)',
-          'Accept-Language': 'zh-TW,zh;q=0.9,en;q=0.8',
-        },
-      });
-      const code = res.getResponseCode();
-      if (code < 200 || code >= 300) {
-        dlog(`[fetchArticleText] HTTP ${code} for ${url}`);
-        return null;
-      }
-      const text = htmlToPlainText(res.getContentText(), 8000);
-      return sanitizeMultiline(text);
-    } catch (err) {
-      dlog(`[fetchArticleText] ${url} -> ${err}`);
-      return null;
-    }
-  };
-
-  const shouldAllowSourceMutations = (sheet) => {
-    if (!sheet || typeof sheet.getName !== 'function') return true;
-    const name = String(sheet.getName() || '');
-    if (!name) return true;
-    if (name.endsWith(OUTPUT_SHEET_SUFFIX)) return false;
-    if (name.endsWith(PROCESSED_SHEET_SUFFIX)) return false;
-    return true;
   };
 
   return {
     createMenu,
     runForSheet,
     runForActiveRow,
+    createTrigger,
+    deleteTrigger,
   };
 })();
 
@@ -1003,4 +550,14 @@ function RL_AUTO_runForSheet() {
 
 function RL_AUTO_runForActiveRow() {
   RepostLensAutomation.runForActiveRow();
+}
+
+function RL_AUTO_createTrigger() {
+  RepostLensAutomation.createTrigger();
+}
+
+
+
+function RL_AUTO_deleteTrigger() {
+  RepostLensAutomation.deleteTrigger();
 }
