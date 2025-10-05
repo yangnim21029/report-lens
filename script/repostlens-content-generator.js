@@ -463,9 +463,9 @@ const RepostLensContentGenerator = (() => {
       const headers = ['URL', 'Brand'];
       const paragraphHeaders = paragraphs.map((_, index) => `paragraph_${index + 1}`);
       const contentHeaders = paragraphs.map((_, index) => `content_${index + 1}`);
-      
+
       headers.push(...paragraphHeaders, ...contentHeaders);
-      
+
       paragraphSheet.getRange(1, 1, 1, headers.length).setValues([headers]);
 
       // 設定標題格式
@@ -475,12 +475,12 @@ const RepostLensContentGenerator = (() => {
 
       // 準備資料列
       const dataRow = [sourceUrl, '']; // URL 和 Brand
-      
+
       // 添加段落內容
       paragraphs.forEach(paragraph => {
         dataRow.push(paragraph);
       });
-      
+
       // 添加空的 content 欄位
       paragraphs.forEach(() => {
         dataRow.push('');
@@ -492,12 +492,12 @@ const RepostLensContentGenerator = (() => {
       // 調整欄寬
       paragraphSheet.setColumnWidth(1, 200); // URL
       paragraphSheet.setColumnWidth(2, 100); // Brand
-      
+
       // 段落欄位
       for (let i = 0; i < paragraphs.length; i++) {
         paragraphSheet.setColumnWidth(3 + i, 300);
       }
-      
+
       // 內容欄位
       for (let i = 0; i < paragraphs.length; i++) {
         paragraphSheet.setColumnWidth(3 + paragraphs.length + i, 400);
@@ -522,30 +522,62 @@ const RepostLensContentGenerator = (() => {
   };
 
   const splitContentByBulletPoints = (content) => {
-    // 直接按照 • 符號分割段落
-    const sections = content.split('•').map(section => section.trim()).filter(section => section.length > 0);
-    
-    // 為每個段落重新添加 • 符號（除了第一個可能不是以 • 開頭的）
-    const paragraphs = sections.map((section, index) => {
-      // 如果段落不是以 • 開頭且不是第一個段落，則添加 •
-      if (index > 0 && !section.startsWith('•')) {
-        return '• ' + section;
+    // 先嘗試按照 • 符號分割
+    if (content.includes('•')) {
+      const sections = content.split('•').map(section => section.trim()).filter(section => section.length > 0);
+      
+      const paragraphs = sections.map((section, index) => {
+        if (index > 0 && !section.startsWith('•')) {
+          return '• ' + section;
+        }
+        return section;
+      });
+
+      const filteredParagraphs = paragraphs.filter(p => {
+        const cleaned = p.trim();
+        return cleaned.length > 10 &&
+          !cleaned.match(/^-+$/) &&
+          !cleaned.match(/^•?\s*-+\s*$/) &&
+          cleaned !== '•';
+      });
+
+      if (filteredParagraphs.length > 1) {
+        dlog(`[splitContentByBulletPoints] 按 • 分割，找到 ${filteredParagraphs.length} 個段落`);
+        return filteredParagraphs;
       }
-      return section;
-    });
+    }
 
-    // 過濾掉太短的段落和分隔線
-    const filteredParagraphs = paragraphs.filter(p => {
-      const cleaned = p.trim();
-      return cleaned.length > 10 && 
-             !cleaned.match(/^-+$/) && // 過濾純分隔線
-             !cleaned.match(/^•?\s*-+\s*$/) && // 過濾 • ---- 格式
-             cleaned !== '•';
-    });
+    // 如果沒有 • 符號，嘗試按 h2 標題分割
+    const h2Pattern = /h2\s+([^h]*?)(?=h2|$)/gi;
+    const h2Matches = [];
+    let match;
 
-    dlog(`[splitContentByBulletPoints] 按 • 分割，找到 ${filteredParagraphs.length} 個段落`);
-    
-    return filteredParagraphs;
+    while ((match = h2Pattern.exec(content)) !== null) {
+      const section = match[1].trim();
+      if (section.length > 50) {
+        h2Matches.push('h2 ' + section);
+      }
+    }
+
+    if (h2Matches.length > 1) {
+      dlog(`[splitContentByBulletPoints] 按 h2 分割，找到 ${h2Matches.length} 個段落`);
+      return h2Matches;
+    }
+
+    // 最後回退到雙換行分割
+    const fallbackSections = content
+      .split(/\n\s*\n/)
+      .map(p => p.trim())
+      .filter(p => p.length > 100);
+
+    if (fallbackSections.length > 1) {
+      dlog(`[splitContentByBulletPoints] 使用雙換行分割，找到 ${fallbackSections.length} 個段落`);
+      return fallbackSections;
+    }
+
+    // 如果都沒有找到合適的分割點，返回整個內容作為單一段落
+    dlog(`[splitContentByBulletPoints] 無法分割，返回單一段落`);
+    return [content];
   };
 
   const processChatContentAsync = (paragraphSheet) => {
@@ -588,7 +620,7 @@ const RepostLensContentGenerator = (() => {
 
       // 過濾空段落
       const validParagraphs = paragraphs.filter(p => p.length > 0);
-      
+
       if (validParagraphs.length === 0) {
         SpreadsheetApp.getActive().toast('沒有找到有效的段落內容', 'RepostLens Content', 5);
         return;
@@ -624,7 +656,7 @@ const RepostLensContentGenerator = (() => {
       const successCount = result.metadata?.successCount || 0;
       const totalCount = result.metadata?.totalParagraphs || 0;
       const message = `✅ 批量處理完成！成功生成 ${successCount}/${totalCount} 個對話內容`;
-      
+
       dlog(`[processChatContentAsync] ${message}`);
       SpreadsheetApp.getActive().toast(message, 'RepostLens Content', 8);
 

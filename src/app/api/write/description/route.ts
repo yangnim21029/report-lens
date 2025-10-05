@@ -9,22 +9,23 @@ export async function POST(req: Request) {
     const body = await req.json();
     const analyseResult = body?.analysisText || body?.analysis || body?.analyseResult || '';
     const outline = body?.outlineText || body?.outline || '';
-    
+
     if (!analyseResult || !outline) {
       return NextResponse.json(
-        { 
-          success: false, 
-          error: "Missing required fields: analysisText and outlineText are required" 
-        }, 
+        {
+          success: false,
+          error: "Missing required fields: analysisText and outlineText are required"
+        },
         { status: 400 }
       );
     }
 
     // 使用你的原始 prompt template
-    const descriptionPrompt = `SEO 排名因素：${analyseResult}
+    const descriptionPrompt = `目標設定如此：${analyseResult}
     
     ----
 把大綱中的每一段h2h3要寫什麼，用一段話說明在[...]內，需要能幫我排名 SEO
+detailing its content.
 
 SEO 的理由可能包括以下，但不限於：
 同時向搜尋引擎清晰展示頁面的完整結構與層次，提升使用者體驗與爬蟲抓取效率。
@@ -62,10 +63,10 @@ h3 xxx
     });
 
     const generatedContent = completion.choices[0]?.message?.content?.trim() || "";
-    
+
     if (!generatedContent) {
       return NextResponse.json(
-        { success: false, error: "Failed to generate content description" }, 
+        { success: false, error: "Failed to generate content description" },
         { status: 502 }
       );
     }
@@ -79,10 +80,10 @@ h3 xxx
   } catch (error) {
     console.error('[write/description] Error:', error);
     return NextResponse.json(
-      { 
-        success: false, 
-        error: error instanceof Error ? error.message : "Unexpected error" 
-      }, 
+      {
+        success: false,
+        error: error instanceof Error ? error.message : "Unexpected error"
+      },
       { status: 500 }
     );
   }
