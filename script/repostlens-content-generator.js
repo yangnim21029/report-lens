@@ -601,6 +601,10 @@ const RepostLensContentGenerator = (() => {
       }
     });
 
+    dlog(`[processChatContentAsync] 找到段落欄位: ${paragraphColumns.join(', ')}`);
+    dlog(`[processChatContentAsync] 找到內容欄位: ${contentColumns.join(', ')}`);
+    dlog(`[processChatContentAsync] 標題列: ${headers.join(', ')}`);
+
     if (paragraphColumns.length === 0) {
       SpreadsheetApp.getActive().toast('找不到段落欄位 (paragraph_*)', 'RepostLens Content', 5);
       return;
@@ -639,6 +643,8 @@ const RepostLensContentGenerator = (() => {
       result.results.forEach((res, index) => {
         if (index < contentColumns.length && res.success) {
           const contentColumn = contentColumns[index];
+          dlog(`[processChatContentAsync] 寫入內容到第 2 列，第 ${contentColumn} 欄`);
+          
           const contentCell = paragraphSheet.getRange(2, contentColumn);
           const truncatedContent = truncateForCell(res.content, 50000);
           contentCell.setValue(truncatedContent);
@@ -648,6 +654,10 @@ const RepostLensContentGenerator = (() => {
           } catch (e) {
             // 忽略註解錯誤
           }
+          
+          dlog(`[processChatContentAsync] 成功寫入 ${truncatedContent.length} 字符到 content_${index + 1}`);
+        } else if (index < contentColumns.length && !res.success) {
+          dlog(`[processChatContentAsync] 段落 ${index + 1} 處理失敗: ${res.error}`);
         }
       });
 
