@@ -522,7 +522,7 @@ const RepostLensContentGenerator = (() => {
   };
 
   const splitContentByBulletPoints = (content) => {
-    // 先嘗試按照 • 符號分割
+    // 優先按照 • 符號分割
     if (content.includes('•')) {
       const sections = content.split('•').map(section => section.trim()).filter(section => section.length > 0);
       
@@ -547,24 +547,35 @@ const RepostLensContentGenerator = (() => {
       }
     }
 
-    // 如果沒有 • 符號，嘗試按 h2 標題分割
-    const h2Pattern = /h2\s+([^h]*?)(?=h2|$)/gi;
-    const h2Matches = [];
-    let match;
-
-    while ((match = h2Pattern.exec(content)) !== null) {
-      const section = match[1].trim();
-      if (section.length > 50) {
-        h2Matches.push('h2 ' + section);
+    // 嘗試按照 --- 分隔符分割
+    if (content.includes('---')) {
+      const sections = content.split(/---+/).map(section => section.trim()).filter(section => section.length > 50);
+      
+      if (sections.length > 1) {
+        dlog(`[splitContentByBulletPoints] 按 --- 分割，找到 ${sections.length} 個段落`);
+        return sections;
       }
     }
 
-    if (h2Matches.length > 1) {
-      dlog(`[splitContentByBulletPoints] 按 h2 分割，找到 ${h2Matches.length} 個段落`);
-      return h2Matches;
+    // 嘗試按照主要 h2 標題分割（但要保持相關的 h3 在一起）
+    // 尋找獨立的 h2 段落，但不拆分緊密相關的 h2+h3 組合
+    const majorSectionPattern = /h2\s+[^h]*?(?=h2\s+(?!.*h3)|$)/gi;
+    const majorSections = [];
+    let match;
+
+    while ((match = majorSectionPattern.exec(content)) !== null) {
+      const section = match[0].trim();
+      if (section.length > 100) {
+        majorSections.push(section);
+      }
     }
 
-    // 最後回退到雙換行分割
+    if (majorSections.length > 1) {
+      dlog(`[splitContentByBulletPoints] 按主要 h2 段落分割，找到 ${majorSections.length} 個段落`);
+      return majorSections;
+    }
+
+    // 回退到雙換行分割
     const fallbackSections = content
       .split(/\n\s*\n/)
       .map(p => p.trim())
