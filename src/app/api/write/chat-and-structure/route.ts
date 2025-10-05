@@ -71,6 +71,7 @@ export async function POST(req: Request) {
 對話內容建議長一些
 大綱中的內容就是撰寫給你的 paragraph 中的 [] 內容
 避免在問題陳述、嚴重性、解決方案中進行分析，應直接正面撰寫大綱要求的內容
+你要寫的是提供給你的 paragarph，討論的題目也是提供給你的，你應該撰文回答 paragarph 中的疑問，使用對話過程中的情境去撰寫 paragraph
 
 ----
 示範輸入＆輸出：
