@@ -21,9 +21,26 @@ export async function POST(req: Request) {
     }
 
     // 使用你的原始 prompt template
-    const descriptionPrompt = `${analyseResult}----
+    const descriptionPrompt = `SEO 排名因素：${analyseResult}
+    
+    ----
 把大綱中的每一段h2h3要寫什麼，用一段話說明在[...]內，需要能幫我排名 SEO
 
+SEO 的理由可能包括以下，但不限於：
+同時向搜尋引擎清晰展示頁面的完整結構與層次，提升使用者體驗與爬蟲抓取效率。
+核心搜尋意圖，爭取在搜尋結果頁面（SERP）中成為 Google 的精選摘要（Featured Snippet），搶佔零點擊搜尋的最高位置。
+類高意圖的長尾關鍵字查詢
+快速滿足使用者對關鍵字的好齊心
+特定角色搜尋的高度相關性，鞏固關鍵字密度。
+豐富內容的語義詞彙，提升使用者在頁面的停留時間，展示頁面的權威性。
+爭取 Google 圖片搜尋的排名，帶來額外流量。
+精煉語句，快速定義
+直接回應關鍵字的查詢，並強調內容特徵的重要性
+旨在滿足使用者對具體的長尾搜尋需求。
+讓搜尋引擎理解此頁面提供了超越基本介紹的深度資訊
+...
+
+以下是 outline:
 ${outline}
 
 output format:
