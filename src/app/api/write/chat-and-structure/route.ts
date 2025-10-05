@@ -39,16 +39,25 @@ export async function POST(req: Request) {
       }
 
       try {
-        const structurePrompt = `你試試寫這一段，寫法是先想像兩個人物對談討論提供的h2h3，再將對談內容放入提供給你的撰寫要求中，分成三個段落（問題陳述，嚴重性，解決方案）。
-輸出對談與整理結果
-對話的是兩個台灣人
+        const structurePrompt = `任務目標:
+        撰寫一篇關於的文章，寫法是先想像兩個人物對談討論提供的h2h3，再將對談內容放入提供給你的撰寫要求中，分成三段文字。
+
+        你要先研究主題，目標是捕捉基礎細節
+        你要專注在 audience
+        問題陳述上，要思考 relatable struggles 跟 worthy moments might resonate with them
+        create a dialogue that weaves in key details about topic naturally
+        ultimately structure the information for SEO optimization, highlighting the problem, its severity, and the solution.
+
+對話內容設定
+1. 對話的是兩個台灣人
+
 語言不要有偏好，要使用中性的字眼，通俗易懂
 每個題目都要單獨有自己的對談，最後整理的資訊，都不冗長，直接說明
 討論時，要避免使用品牌客戶不喜歡的方式
 要知道品牌用戶的大家喜歡聽什麼？（來自問問大家的想法，這樣才能對話，才是清晰、有趣且貼心）
 而不是購物需求偏好
 
-品牌客戶：${brand || "由你決定最適合的品牌設定"}
+品牌與受眾設定：${brand || "由你決定最適合的品牌設定"}
 
 請確保最後撰寫的用詞與邏輯順序，能反映（或呼應）前方『對話內容』的鋪陳。讓整理結果看起來像是從人物對話中直接提煉的重點。
 
@@ -70,11 +79,7 @@ export async function POST(req: Request) {
 
 對話內容建議長一些
 大綱中的內容就是撰寫給你的 paragraph 中的 [] 內容
-避免在問題陳述、嚴重性、解決方案中進行分析，應直接正面撰寫大綱要求的內容
-
-問題陳述是識別對話中的人，有什麼問題情境，請撰寫大綱要求的內容
-嚴重性是說對話中的人，會錯失什麼好處跟有趣的部分，請撰寫大綱要求的內容
-解決方案是撰寫大綱要求的內容，用正面態度提供所需資訊
+避免在輸出分析過程與結果，應直接正面撰寫大綱要求的內容
 
 不要在這個回覆中，包含任何 SEO 的分析與說明
 回答需要跟 h2 h3 有關
@@ -187,7 +192,7 @@ alt 文本：Chiikawa 角色介紹 - 吉伊（ちいかわ）在拔草檢定中�
 
 ---
 
-試試寫這一段：${para}
+內容產出大綱：${para}
 ...
 `;
 
