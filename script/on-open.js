@@ -8,6 +8,9 @@ function onOpen() {
   const batchMenu = globalAny?.RL_BATCH_onOpenMenu;
   if (typeof batchMenu === 'function') batchMenu();
 
+  const contentMenu = globalAny?.RL_CONTENT_onOpenMenu;
+  if (typeof contentMenu === 'function') contentMenu();
+
   const convMenu = globalAny?.RL_CONV_onOpenMenu;
   if (typeof convMenu === 'function') convMenu();
 }
