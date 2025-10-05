@@ -48,6 +48,8 @@ export async function POST(req: Request) {
         create a dialogue that weaves in key details about topic naturally
         ultimately structure the information for SEO optimization, highlighting the problem, its severity, and the solution.
 
+        First, I'll research topic and brand, and craft a relatable dialogue. Then, I'll analyze the information and organize it into an SEO-friendly format, incorporating a problem statement, severity, and solution. you do plan to conclude with a comprehensive response.
+
 對話內容設定
 1. 對話的是兩個台灣人
 
@@ -58,8 +60,6 @@ export async function POST(req: Request) {
 而不是購物需求偏好
 
 品牌與受眾設定：${brand || "由你決定最適合的品牌設定"}
-
-請確保最後撰寫的用詞與邏輯順序，能反映（或呼應）前方『對話內容』的鋪陳。讓整理結果看起來像是從人物對話中直接提煉的重點。
 
 重點：請確保最後撰寫的用詞與邏輯順序，能反映（或呼應）前方『對話內容』的鋪陳。讓整理結果看起來像是從人物對話中直接提煉的內容。
 
@@ -72,18 +72,16 @@ export async function POST(req: Request) {
 對話人物設定：
 對話內容：
 品牌受眾喜歡聽什麼：
-撰寫大綱內容：
-- 問題陳述
-- 嚴重性
-- 解決方案
+對話內容整理：
 
 對話內容建議長一些
-大綱中的內容就是撰寫給你的 paragraph 中的 [] 內容
-避免在輸出分析過程與結果，應直接正面撰寫大綱要求的內容
-
+整理內容要符合 paragraph 中的 h2h3 [] 內容
+不要分析對話過程
 不要在這個回覆中，包含任何 SEO 的分析與說明
-回答需要跟 h2 h3 有關
-討論、對話請模擬真實情境，不要列點。
+
+輸出討論、對話時，要模擬真實對話，不要列點。
+
+輸出統整時，要使用簡單、對話、直白的敘述
 
 ----
 示範輸入＆輸出：
