@@ -20,53 +20,83 @@ export async function POST(req: Request) {
       );
     }
 
-    // 使用你的原始 prompt template
-    const descriptionPrompt = `你是資深的內容行銷專家
-    
-    目標設定如此：${analyseResult}
-    
-    ----
-把大綱中的每一段h2h3要寫什麼內容，用一段話說明在[...]內，需要能幫我排名 SEO。
+    const descriptionPrompt = `你是資深的 SEO 內容策略專家，擅長分析關鍵字難度與索引優化。
 
-不要有語言/地區偏好，使用中性的用詞
+# 任務目標
+分析大綱中每個 h2/h3 標題的 SEO 索引難度，並提供降低難度的策略建議。
 
-問自己：
-- 你的內容主要是寫給誰看的？是學生、上班族、媽媽、還是企業老闆？了解他們是誰，才能寫出他們感興趣的內容。
-- 你希望讀者看完後做什麼？是為了提升網站流量、提高某個關鍵字的搜尋排名、獲得更多的銷售機會，還是單純建立品牌形象？
-- 為了達到你的目標，文章裡 必須包含 哪些重要的資訊、賣點、或數據？這些是內容的骨幹，缺一不可。
-- 你希望品牌給人什麼樣的感覺？是專業權威、親切友善、輕鬆有趣，還是溫暖感性？這會決定你用字遣詞的方式。
+# 分析目標
+${analyseResult}
 
-你的輸出不應該包含分析內容，應該維持原本的h2h3不改
-不考慮互動元素，只考慮文字編輯要提供給讀者的資訊與內容
+# 分析方法
+對每個標題，從以下多個維度評估索引難度（1-10分，10分最難）：
 
-[] 描述示範：
-[精選一系列送俾長輩嘅四字祝福語，句句都係祝賀身體健康、萬事如意嘅吉祥話，夠晒得體又顯孝心。]
-[收集最新、最搞鬼嘅蛇年諧音四字祝福，等你可以喺 WhatsApp Group 同 IG Story 度引爆笑彈，做個最幽默嘅朋友。]
-[我哋將精選揮春設計成 A4 大小嘅 PDF 檔案，方便你隨時下載列印，安坐家中都可以自製揮春。]
+## 1. 競爭度分析 (Competition Score)
+- 關鍵字搜尋量與競爭程度
+- 是否為高競爭的通用詞（如「如何賺錢」）vs 長尾關鍵字（如「2025年台灣遠端工作如何報稅」）
+- 評分：1-3分（低競爭長尾詞）、4-7分（中等競爭）、8-10分（高競爭通用詞）
 
-SEO 的理由可能包括以下，但不限於：
-同時向搜尋引擎清晰展示頁面的完整結構與層次，提升使用者體驗與爬蟲抓取效率。
-核心搜尋意圖，爭取在搜尋結果頁面（SERP）中成為 Google 的精選摘要（Featured Snippet），搶佔零點擊搜尋的最高位置。
-類高意圖的長尾關鍵字查詢
-快速滿足使用者對關鍵字的好齊心
-特定角色搜尋的高度相關性，鞏固關鍵字密度。
-豐富內容的語義詞彙，提升使用者在頁面的停留時間，展示頁面的權威性。
-爭取 Google 圖片搜尋的排名，帶來額外流量。
-精煉語句，快速定義
-直接回應關鍵字的查詢，並強調內容特徵的重要性
-旨在滿足使用者對具體的長尾搜尋需求。
-讓搜尋引擎理解此頁面提供了超越基本介紹的深度資訊
-...
+## 2. 內容深度需求 (Content Depth Score)
+- 需要多少字數才能滿足搜尋意圖
+- 是否需要專業知識、數據、案例
+- 評分：1-3分（簡單定義）、4-7分（需要詳細說明）、8-10分（需要深度研究）
 
-以下是 outline:
+## 3. 使用者意圖匹配度 (Intent Match Score)
+- 標題是否清楚回應使用者搜尋意圖
+- 是否容易產生點擊（CTR）
+- 評分：1-3分（意圖明確）、4-7分（需要優化）、8-10分（意圖模糊）
+
+## 4. 結構化資料潛力 (Structured Data Score)
+- 是否適合 Featured Snippet、FAQ、How-to 等結構
+- 評分：1-3分（高潛力）、4-7分（中等）、8-10分（難以結構化）
+
+## 5. 語義相關性 (Semantic Relevance Score)
+- 標題與主題的語義關聯強度
+- LSI 關鍵字覆蓋度
+- 評分：1-3分（高相關）、4-7分（中等）、8-10分（弱相關）
+
+# 輸出格式
+
+對每個 h2/h3 標題，輸出以下格式：
+
+h2 [標題文字]
+難度評分：[總分]/50 (競爭度: X, 內容深度: X, 意圖匹配: X, 結構化: X, 語義相關: X)
+[策略建議：具體說明如何降低索引難度，包括：
+1. 關鍵字優化建議（加入長尾詞、地區詞、時間詞等）
+2. 內容結構建議（使用列表、表格、步驟等）
+3. 語義擴充建議（相關詞彙、同義詞）
+4. Featured Snippet 優化建議
+5. 其他 SEO 技巧]
+
+h3 [標題文字]
+難度評分：[總分]/50 (競爭度: X, 內容深度: X, 意圖匹配: X, 結構化: X, 語義相關: X)
+[策略建議...]
+
+# 策略建議範例
+
+好的建議：
+[難度評分：18/50 (競爭度: 4, 內容深度: 3, 意圖匹配: 2, 結構化: 5, 語義相關: 4)
+策略建議：
+1. 關鍵字優化：將「送長輩祝福語」改為「2025蛇年送長輩四字祝福語大全」，加入年份與具體格式降低競爭
+2. 內容結構：使用表格呈現「場合-祝福語-使用情境」三欄式結構，提高 Featured Snippet 機會
+3. 語義擴充：加入「拜年」、「過年」、「新春」、「吉祥話」等相關詞彙
+4. 數量化：明確標示「精選50句」提升點擊率
+5. 使用情境：針對不同場合（拜訪、電話、訊息）分類，提高實用性]
+
+不好的建議：
+[寫一些祝福語就好]
+[多寫一點內容]
+[加入關鍵字]
+
+# 大綱內容
 ${outline}
 
-output format:
-h2 xxx
-h3 xxx
-[...]
-h3 xxx
-[...]
+# 注意事項
+- 不要有語言/地區偏好，使用中性用詞
+- 評分要客觀，基於實際 SEO 難度
+- 策略建議要具體可執行，不要空泛
+- 保持原本的 h2/h3 結構不變
+- 每個建議都要能直接降低索引難度
 `;
 
     const completion = await openai.chat.completions.create({
@@ -83,40 +113,29 @@ h3 xxx
 
     if (!generatedContent) {
       return NextResponse.json(
-        { success: false, error: "Failed to generate content description" },
+        { success: false, error: "Failed to generate SEO analysis" },
         { status: 502 }
       );
     }
 
-    // 清理內容：移除 --- 分隔符避免干擾 h2 分割
     const cleanedContent = generatedContent.replace(/^---+\s*$/gm, '').trim();
-    console.log(`[write/description] Original content: ${cleanedContent.substring(0, 200)}...`);
-    
-    // 檢查是否移除了分隔符
-    if (generatedContent !== cleanedContent) {
-      console.log(`[write/description] Removed --- separators from content`);
-    }
-    
-    // 先嘗試按 h2 分割 (使用清理後的內容)
+    console.log(`[write/description] Generated SEO analysis: ${cleanedContent.substring(0, 200)}...`);
+
+    // 按 h2 分割段落
     const h2Sections = cleanedContent.split(/(?=h2\s)/i).filter(section => section.trim().length > 50);
-    
+
     let paragraphs = [];
-    
+
     if (h2Sections.length > 1) {
       paragraphs = h2Sections.map(section => section.trim());
       console.log(`[write/description] Split by h2: found ${paragraphs.length} sections`);
     } else {
-      // 如果沒有 h2，嘗試按其他方式分割
-      console.log(`[write/description] No h2 found, trying alternative splitting`);
-      
-      // 嘗試按雙換行分割
       const doubleLine = cleanedContent.split(/\n\s*\n/).filter(section => section.trim().length > 100);
-      
+
       if (doubleLine.length > 1) {
         paragraphs = doubleLine.map(section => section.trim());
         console.log(`[write/description] Split by double newlines: found ${paragraphs.length} sections`);
       } else {
-        // 最後回退到單一段落
         paragraphs = [cleanedContent];
         console.log(`[write/description] No splitting possible, using single paragraph`);
       }
@@ -132,7 +151,8 @@ h3 xxx
       metadata: {
         totalParagraphs: paragraphs.length,
         contentLength: cleanedContent.length,
-        model: "gpt-5-mini-2025-08-07"
+        model: "gpt-5-mini-2025-08-07",
+        analysisType: "seo-difficulty-scoring"
       }
     });
 
