@@ -442,8 +442,8 @@ const RepostLensContentGenerator = (() => {
         sourceUrl = String(sheet.getRange(row, validation.urlColumn).getValue() || '').trim();
       }
 
-      // 智能拆分段落：以 h2/h3 標題為分界點
-      const paragraphs = splitContentByHeadings(descriptionContent);
+      // 按照 • 符號拆分段落
+      const paragraphs = splitContentByBulletPoints(descriptionContent);
 
       if (paragraphs.length === 0) {
         return {
@@ -521,108 +521,31 @@ const RepostLensContentGenerator = (() => {
     }
   };
 
-  const splitContentByHeadings = (content) => {
-    // 優先使用 bullet point 格式分割 (• - -)
-    const bulletPattern = /^•\s+/gm;
-    const bulletSections = [];
-    let lastIndex = 0;
-    let match;
-
-    // 重置正則表達式
-    bulletPattern.lastIndex = 0;
-
-    while ((match = bulletPattern.exec(content)) !== null) {
-      // 如果不是第一個 bullet point，保存前一個段落
-      if (lastIndex < match.index) {
-        const prevSection = content.slice(lastIndex, match.index).trim();
-        if (prevSection) {
-          bulletSections.push(prevSection);
-        }
+  const splitContentByBulletPoints = (content) => {
+    // 直接按照 • 符號分割段落
+    const sections = content.split('•').map(section => section.trim()).filter(section => section.length > 0);
+    
+    // 為每個段落重新添加 • 符號（除了第一個可能不是以 • 開頭的）
+    const paragraphs = sections.map((section, index) => {
+      // 如果段落不是以 • 開頭且不是第一個段落，則添加 •
+      if (index > 0 && !section.startsWith('•')) {
+        return '• ' + section;
       }
-      lastIndex = match.index;
-    }
+      return section;
+    });
 
-    // 添加最後一個段落
-    if (lastIndex < content.length) {
-      const lastSection = content.slice(lastIndex).trim();
-      if (lastSection) {
-        bulletSections.push(lastSection);
-      }
-    }
+    // 過濾掉太短的段落和分隔線
+    const filteredParagraphs = paragraphs.filter(p => {
+      const cleaned = p.trim();
+      return cleaned.length > 10 && 
+             !cleaned.match(/^-+$/) && // 過濾純分隔線
+             !cleaned.match(/^•?\s*-+\s*$/) && // 過濾 • ---- 格式
+             cleaned !== '•';
+    });
 
-    // 如果找到 bullet points，使用這個結果
-    if (bulletSections.length > 1) {
-      dlog(`[splitContentByHeadings] 使用 bullet point 分割，找到 ${bulletSections.length} 個段落`);
-      return bulletSections.filter(p => p.length > 20); // 過濾太短的段落
-    }
-
-    // 如果沒有 bullet points，嘗試以 markdown 標題分割
-    const headingPattern = /^(#{2,3})\s+(.+)$/gm;
-    const headingSections = [];
-    lastIndex = 0;
-
-    // 重置正則表達式
-    headingPattern.lastIndex = 0;
-
-    while ((match = headingPattern.exec(content)) !== null) {
-      // 如果不是第一個標題，保存前一個段落
-      if (lastIndex < match.index) {
-        const prevSection = content.slice(lastIndex, match.index).trim();
-        if (prevSection) {
-          headingSections.push(prevSection);
-        }
-      }
-      lastIndex = match.index;
-    }
-
-    // 添加最後一個段落
-    if (lastIndex < content.length) {
-      const lastSection = content.slice(lastIndex).trim();
-      if (lastSection) {
-        headingSections.push(lastSection);
-      }
-    }
-
-    // 如果找到標題，使用這個結果
-    if (headingSections.length > 0) {
-      dlog(`[splitContentByHeadings] 使用標題分割，找到 ${headingSections.length} 個段落`);
-      
-      // 過濾太短的段落並合併相鄰的短段落
-      const filteredSections = [];
-      let currentSection = '';
-
-      for (const section of headingSections) {
-        if (section.length < 100 && currentSection) {
-          // 短段落合併到前一個段落
-          currentSection += '\n\n' + section;
-        } else if (section.length < 100) {
-          // 短段落暫存
-          currentSection = section;
-        } else {
-          // 長段落
-          if (currentSection) {
-            filteredSections.push(currentSection + '\n\n' + section);
-            currentSection = '';
-          } else {
-            filteredSections.push(section);
-          }
-        }
-      }
-
-      // 添加最後的段落
-      if (currentSection) {
-        filteredSections.push(currentSection);
-      }
-
-      return filteredSections.filter(p => p.length > 0);
-    }
-
-    // 最後回退到雙換行分割
-    dlog(`[splitContentByHeadings] 使用雙換行分割`);
-    return content
-      .split(/\n\s*\n/)
-      .map(p => p.trim())
-      .filter(p => p.length > 50); // 過濾太短的段落
+    dlog(`[splitContentByBulletPoints] 按 • 分割，找到 ${filteredParagraphs.length} 個段落`);
+    
+    return filteredParagraphs;
   };
 
   const processChatContentAsync = (paragraphSheet) => {
