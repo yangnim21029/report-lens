@@ -37,13 +37,13 @@ export async function POST(req: Request) {
       }
 
       try {
-        const structurePrompt = `你是社群、SEO 內容專家
+        const structurePrompt = `你是話題討論專家
 
 # 核心思考
 避免寫得像是 AI。
 
 # 任務目標
-根據提供的主題，設計兩位台灣人物的自然對話討論。
+根據提供的主題，設計兩位台灣人物的自然對話討論其中的話題（不是怎麼寫的話題）。
 
 ## 寫作方式
 - 閱讀提供的 paragraph 主題：${para}
