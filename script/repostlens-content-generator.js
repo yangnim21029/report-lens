@@ -348,9 +348,9 @@ const RepostLensContentGenerator = (() => {
         };
       }
 
-      // 使用正則表達式拆分段落（根據 h2 或 h3 標題）
+      // 按 h2 標題拆分段落（格式：h2 標題文字）
       const paragraphs = descriptionContent
-        .split(/(?=^#{2,3}\s)/m)
+        .split(/(?=^h2\s)/im)
         .map(p => p.trim())
         .filter(p => p.length > 0);
 
@@ -359,7 +359,7 @@ const RepostLensContentGenerator = (() => {
       if (paragraphs.length === 0) {
         return {
           success: false,
-          error: '沒有找到可拆分的段落'
+          error: '沒有找到可拆分的段落（找不到 h2 標題）'
         };
       }
 
