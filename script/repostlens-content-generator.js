@@ -312,11 +312,18 @@ const RepostLensContentGenerator = (() => {
     const truncatedContent = truncateForCell(result.content, 50000);
     contentCell.setValue(truncatedContent);
 
-    // 添加註解
+    // 添加註解，包含段落資訊
     try {
-      contentCell.setNote(`AI 生成內容 (${result.metadata?.contentLength || 0} 字)\n生成時間: ${new Date().toLocaleString()}`);
+      const paragraphCount = result.paragraphs ? result.paragraphs.length : 0;
+      contentCell.setNote(`AI 生成內容 (${result.metadata?.contentLength || 0} 字)\n段落數: ${paragraphCount}\n生成時間: ${new Date().toLocaleString()}`);
     } catch (e) {
       // 忽略註解錯誤
+    }
+
+    // 儲存段落資訊到 PropertiesService 以供後續使用
+    if (result.paragraphs && result.paragraphs.length > 0) {
+      const properties = PropertiesService.getScriptProperties();
+      properties.setProperty(`PARAGRAPHS_ROW_${row}`, JSON.stringify(result.paragraphs));
     }
 
     SpreadsheetApp.flush();
@@ -442,8 +449,27 @@ const RepostLensContentGenerator = (() => {
         sourceUrl = String(sheet.getRange(row, validation.urlColumn).getValue() || '').trim();
       }
 
-      // 按照 • 符號拆分段落
-      const paragraphs = splitContentByBulletPoints(descriptionContent);
+      // 嘗試從 PropertiesService 獲取 API 返回的段落列表
+      let paragraphs = [];
+      
+      try {
+        const properties = PropertiesService.getScriptProperties();
+        const storedParagraphs = properties.getProperty(`PARAGRAPHS_ROW_${row}`);
+        
+        if (storedParagraphs) {
+          paragraphs = JSON.parse(storedParagraphs);
+          dlog(`[splitAndCreateParagraphSheet] 使用 API 返回的段落列表，共 ${paragraphs.length} 個段落`);
+          
+          // 清理已使用的資料
+          properties.deleteProperty(`PARAGRAPHS_ROW_${row}`);
+        } else {
+          // 回退到分割邏輯
+          paragraphs = splitContentByBulletPoints(descriptionContent);
+        }
+      } catch (e) {
+        dlog(`[splitAndCreateParagraphSheet] 無法讀取儲存的段落，使用分割邏輯: ${e.message}`);
+        paragraphs = splitContentByBulletPoints(descriptionContent);
+      }
 
       if (paragraphs.length === 0) {
         return {

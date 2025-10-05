@@ -83,10 +83,35 @@ h3 xxx
       );
     }
 
+    // 按 h2 拆分成段落列表
+    const h2Pattern = /h2\s+([^h]*?)(?=h2|$)/gi;
+    const paragraphs = [];
+    let match;
+
+    while ((match = h2Pattern.exec(generatedContent)) !== null) {
+      const section = match[0].trim();
+      if (section.length > 50) {
+        paragraphs.push(section);
+      }
+    }
+
+    // 如果沒有找到 h2，返回整個內容作為單一段落
+    if (paragraphs.length === 0) {
+      paragraphs.push(generatedContent);
+    }
+
+    console.log(`[write/description] Generated ${paragraphs.length} paragraphs from h2 sections`);
+
     return NextResponse.json({
       success: true,
       content: generatedContent,
       description: generatedContent,
+      paragraphs: paragraphs,
+      metadata: {
+        totalParagraphs: paragraphs.length,
+        contentLength: generatedContent.length,
+        model: "gpt-5-mini-2025-08-07"
+      }
     });
 
   } catch (error) {
