@@ -441,7 +441,7 @@ const RepostLensContentGenerator = (() => {
     }
   };
 
-  const splitAndCreateParagraphSheet = (sheet, row, descriptionContent, validation) => {
+  const splitAndCreateParagraphSheet = (sheet, row, _descriptionContent, validation) => {
     try {
       // 獲取 URL (如果有的話)
       let sourceUrl = '';
@@ -451,14 +451,14 @@ const RepostLensContentGenerator = (() => {
 
       // 從 PropertiesService 獲取 API 返回的段落列表
       let paragraphs = [];
-      
+
       const properties = PropertiesService.getScriptProperties();
       const storedParagraphs = properties.getProperty(`PARAGRAPHS_ROW_${row}`);
-      
+
       if (storedParagraphs) {
         paragraphs = JSON.parse(storedParagraphs);
         dlog(`[splitAndCreateParagraphSheet] 使用 API 返回的段落列表，共 ${paragraphs.length} 個段落`);
-        
+
         // 清理已使用的資料
         properties.deleteProperty(`PARAGRAPHS_ROW_${row}`);
       } else {
@@ -483,11 +483,10 @@ const RepostLensContentGenerator = (() => {
       const paragraphSheet = spreadsheet.insertSheet(sheetName);
 
       // 動態生成標題列
-      const headers = ['URL', 'Brand'];
+      const headers = ['Type', 'URL', 'Brand'];
       const paragraphHeaders = paragraphs.map((_, index) => `paragraph_${index + 1}`);
-      const contentHeaders = paragraphs.map((_, index) => `content_${index + 1}`);
 
-      headers.push(...paragraphHeaders, ...contentHeaders);
+      headers.push(...paragraphHeaders);
 
       paragraphSheet.getRange(1, 1, 1, headers.length).setValues([headers]);
 
@@ -496,34 +495,34 @@ const RepostLensContentGenerator = (() => {
       headerRange.setFontWeight('bold');
       headerRange.setBackground('#f0f0f0');
 
-      // 準備資料列
-      const dataRow = [sourceUrl, '']; // URL 和 Brand
+      // 準備段落資料列 (第 2 列)
+      const paragraphRow = ['paragraph_output', sourceUrl, '']; // Type, URL, Brand
 
       // 添加段落內容
       paragraphs.forEach(paragraph => {
-        dataRow.push(paragraph);
+        paragraphRow.push(paragraph);
       });
 
-      // 添加空的 content 欄位
+      // 準備內容資料列 (第 3 列)
+      const contentRow = ['generate_content_output', '', '']; // Type, URL, Brand
+
+      // 添加空的 paragraph 欄位 (待生成對話內容)
       paragraphs.forEach(() => {
-        dataRow.push('');
+        contentRow.push('');
       });
 
-      // 寫入資料
-      paragraphSheet.getRange(2, 1, 1, dataRow.length).setValues([dataRow]);
+      // 寫入兩列資料
+      const allData = [paragraphRow, contentRow];
+      paragraphSheet.getRange(2, 1, 2, paragraphRow.length).setValues(allData);
 
       // 調整欄寬
-      paragraphSheet.setColumnWidth(1, 200); // URL
-      paragraphSheet.setColumnWidth(2, 100); // Brand
+      paragraphSheet.setColumnWidth(1, 150); // Type
+      paragraphSheet.setColumnWidth(2, 200); // URL
+      paragraphSheet.setColumnWidth(3, 100); // Brand
 
       // 段落欄位
       for (let i = 0; i < paragraphs.length; i++) {
-        paragraphSheet.setColumnWidth(3 + i, 300);
-      }
-
-      // 內容欄位
-      for (let i = 0; i < paragraphs.length; i++) {
-        paragraphSheet.setColumnWidth(3 + paragraphs.length + i, 400);
+        paragraphSheet.setColumnWidth(4 + i, 400);
       }
 
       dlog(`[splitAndCreateParagraphSheet] 成功創建 Sheet: ${sheetName}, 段落數: ${paragraphs.length}`);
@@ -556,19 +555,15 @@ const RepostLensContentGenerator = (() => {
     // 分析 sheet 結構來找出段落欄位
     const headers = paragraphSheet.getRange(1, 1, 1, paragraphSheet.getLastColumn()).getValues()[0];
     const paragraphColumns = [];
-    const contentColumns = [];
 
     headers.forEach((header, index) => {
       const headerStr = String(header || '').toLowerCase();
       if (headerStr.startsWith('paragraph_')) {
         paragraphColumns.push(index + 1);
-      } else if (headerStr.startsWith('content_')) {
-        contentColumns.push(index + 1);
       }
     });
 
     dlog(`[processChatContentAsync] 找到段落欄位: ${paragraphColumns.join(', ')}`);
-    dlog(`[processChatContentAsync] 找到內容欄位: ${contentColumns.join(', ')}`);
     dlog(`[processChatContentAsync] 標題列: ${headers.join(', ')}`);
 
     if (paragraphColumns.length === 0) {
@@ -579,9 +574,9 @@ const RepostLensContentGenerator = (() => {
     SpreadsheetApp.getActive().toast('開始批量生成對話內容...', 'RepostLens Content', 3);
 
     try {
-      // 讀取所有段落內容
+      // 讀取所有段落內容 (從第 2 列讀取段落)
       const paragraphs = [];
-      const brand = String(paragraphSheet.getRange(2, 2).getValue() || '').trim(); // Brand 在第 2 欄
+      const brand = String(paragraphSheet.getRange(2, 3).getValue() || '').trim(); // Brand 在第 3 欄
 
       paragraphColumns.forEach(column => {
         const paragraph = String(paragraphSheet.getRange(2, column).getValue() || '').trim();
@@ -605,13 +600,13 @@ const RepostLensContentGenerator = (() => {
         throw new Error(result.error || '批量處理失敗');
       }
 
-      // 寫入結果到對應的 content 欄位
+      // 寫入結果到對應的 paragraph 欄位 (第 3 列)
       result.results.forEach((res, index) => {
-        if (index < contentColumns.length && res.success) {
-          const contentColumn = contentColumns[index];
-          dlog(`[processChatContentAsync] 寫入內容到第 2 列，第 ${contentColumn} 欄`);
-          
-          const contentCell = paragraphSheet.getRange(2, contentColumn);
+        if (index < paragraphColumns.length && res.success) {
+          const paragraphColumn = paragraphColumns[index];
+          dlog(`[processChatContentAsync] 寫入內容到第 3 列，第 ${paragraphColumn} 欄`);
+
+          const contentCell = paragraphSheet.getRange(3, paragraphColumn);
           const truncatedContent = truncateForCell(res.content, 50000);
           contentCell.setValue(truncatedContent);
 
@@ -620,9 +615,9 @@ const RepostLensContentGenerator = (() => {
           } catch (e) {
             // 忽略註解錯誤
           }
-          
-          dlog(`[processChatContentAsync] 成功寫入 ${truncatedContent.length} 字符到 content_${index + 1}`);
-        } else if (index < contentColumns.length && !res.success) {
+
+          dlog(`[processChatContentAsync] 成功寫入 ${truncatedContent.length} 字符到 paragraph_${index + 1}`);
+        } else if (index < paragraphColumns.length && !res.success) {
           dlog(`[processChatContentAsync] 段落 ${index + 1} 處理失敗: ${res.error}`);
         }
       });
