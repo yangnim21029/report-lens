@@ -22,12 +22,7 @@ const RepostLensContentGenerator = (() => {
   const createMenu = () => {
     SpreadsheetApp.getUi()
       .createMenu('RepostLens Content')
-      .addItem('1. 生成段落描述 (當前列)', 'RL_CONTENT_generateDescriptionForActiveRow')
-      .addItem('2. 拆分段落到新 Sheet', 'RL_CONTENT_splitParagraphsForActiveRow')
-      .addItem('3. 生成對話內容 (批量)', 'RL_CONTENT_generateChatContentBatch')
-      .addItem('4. 生成最終內容 (批量)', 'RL_CONTENT_generateFinalContentBatch')
-      .addSeparator()
-      .addItem('完整流程 (當前列)', 'RL_CONTENT_fullProcessForActiveRow')
+      .addItem('🚀 完整流程 (當前列)', 'RL_CONTENT_fullProcessForActiveRow')
       .addSeparator()
       .addItem('檢查 Output Sheet 格式', 'RL_CONTENT_checkOutputFormat')
       .addToUi();
@@ -53,145 +48,6 @@ const RepostLensContentGenerator = (() => {
     } else {
       SpreadsheetApp.getUi().alert(`❌ Output Sheet 格式驗證失敗！\n\n${validation.error}`);
     }
-  };
-
-  const generateDescriptionForActiveRow = () => {
-    const sheet = SpreadsheetApp.getActiveSheet();
-
-    // 驗證格式
-    const validation = validateOutputSheetFormat(sheet);
-    if (!validation.isValid) {
-      SpreadsheetApp.getUi().alert(`Sheet 格式不正確: ${validation.error}`);
-      return;
-    }
-
-    const activeCell = sheet.getActiveCell();
-    const row = activeCell.getRow();
-    if (row < 2) {
-      SpreadsheetApp.getUi().alert('請選擇第 2 列以後的資料列');
-      return;
-    }
-
-    dlog(`[generateDescriptionForActiveRow] 處理第 ${row} 列`);
-
-    try {
-      const result = processDescriptionGeneration(sheet, row, validation);
-      const message = result.success
-        ? `✅ 成功生成段落描述 (${result.contentLength} 字)`
-        : `❌ 生成失敗: ${result.error}`;
-
-      dlog(`[generateDescriptionForActiveRow] ${message}`);
-      SpreadsheetApp.getActive().toast(message, 'RepostLens Content', 5);
-    } catch (err) {
-      const message = `處理錯誤: ${err.message}`;
-      dlog(`[generateDescriptionForActiveRow] ${message}`);
-      SpreadsheetApp.getActive().toast(message, 'RepostLens Content', 5);
-    }
-  };
-
-  const splitParagraphsForActiveRow = () => {
-    const sheet = SpreadsheetApp.getActiveSheet();
-    const activeCell = sheet.getActiveCell();
-    const row = activeCell.getRow();
-
-    if (row < 2) {
-      SpreadsheetApp.getUi().alert('請選擇第 2 列以後的資料列');
-      return;
-    }
-
-    // 檢查是否有生成的描述內容 (G 欄)
-    const descriptionContent = String(sheet.getRange(row, 7).getValue() || '').trim();
-    if (!descriptionContent) {
-      SpreadsheetApp.getUi().alert('請先生成段落描述 (步驟 1)');
-      return;
-    }
-
-    // 驗證格式
-    const validation = validateOutputSheetFormat(sheet);
-    if (!validation.isValid) {
-      SpreadsheetApp.getUi().alert(`Sheet 格式不正確: ${validation.error}`);
-      return;
-    }
-
-    try {
-      const result = splitAndCreateParagraphSheet(sheet, row, descriptionContent, validation);
-      const message = result.success
-        ? `✅ 成功拆分 ${result.paragraphCount} 個段落到新 Sheet`
-        : `❌ 拆分失敗: ${result.error}`;
-
-      dlog(`[splitParagraphsForActiveRow] ${message}`);
-      SpreadsheetApp.getActive().toast(message, 'RepostLens Content', 5);
-    } catch (err) {
-      const message = `拆分錯誤: ${err.message}`;
-      dlog(`[splitParagraphsForActiveRow] ${message}`);
-      SpreadsheetApp.getActive().toast(message, 'RepostLens Content', 5);
-    }
-  };
-
-  const generateChatContentBatch = () => {
-    const sheet = SpreadsheetApp.getActiveSheet();
-
-    // 檢查是否是段落 sheet
-    if (!sheet.getName().includes('Paragraphs')) {
-      SpreadsheetApp.getUi().alert('請切換到段落 Sheet (名稱包含 "Paragraphs")');
-      return;
-    }
-
-    const lastRow = sheet.getLastRow();
-    if (lastRow < 2) {
-      SpreadsheetApp.getUi().alert('段落 Sheet 沒有資料');
-      return;
-    }
-
-    // 分析段落數量
-    const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
-    const paragraphCount = headers.filter(h => String(h || '').toLowerCase().startsWith('paragraph_')).length;
-
-    // 確認是否要處理所有段落
-    const response = SpreadsheetApp.getUi().showYesNoDialog(
-      'RepostLens Content',
-      `確定要為 ${paragraphCount} 個段落批量生成對話內容嗎？\n\n將使用 AI 批量處理。`,
-      SpreadsheetApp.getUi().ButtonSet.YES_NO
-    );
-
-    if (response !== SpreadsheetApp.getUi().Button.YES) {
-      return;
-    }
-
-    processChatContentAsync(sheet);
-  };
-
-  const generateFinalContentBatch = () => {
-    const sheet = SpreadsheetApp.getActiveSheet();
-
-    // 檢查是否是段落 sheet
-    if (!sheet.getName().includes('Paragraphs')) {
-      SpreadsheetApp.getUi().alert('請切換到段落 Sheet (名稱包含 "Paragraphs")');
-      return;
-    }
-
-    const lastRow = sheet.getLastRow();
-    if (lastRow < 3) {
-      SpreadsheetApp.getUi().alert('段落 Sheet 需要至少 3 列資料（標題、paragraph_output、generate_content_output）');
-      return;
-    }
-
-    // 分析段落數量
-    const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
-    const paragraphCount = headers.filter(h => String(h || '').toLowerCase().startsWith('paragraph_')).length;
-
-    // 確認是否要處理所有段落
-    const response = SpreadsheetApp.getUi().showYesNoDialog(
-      'RepostLens Content',
-      `確定要為 ${paragraphCount} 個段落批量生成最終內容嗎？\n\n將使用 AI 批量處理。`,
-      SpreadsheetApp.getUi().ButtonSet.YES_NO
-    );
-
-    if (response !== SpreadsheetApp.getUi().Button.YES) {
-      return;
-    }
-
-    processFinalContentAsync(sheet);
   };
 
   const fullProcessForActiveRow = () => {
@@ -236,10 +92,24 @@ const RepostLensContentGenerator = (() => {
       // 步驟 3: 生成對話內容
       dlog(`[fullProcess] 步驟 3: 生成對話內容`);
       const paragraphSheet = splitResult.paragraphSheet;
-      processChatContentAsync(paragraphSheet);
+      const chatResult = processChatContentSync(paragraphSheet);
+      
+      if (!chatResult.success) {
+        throw new Error(`對話內容生成失敗: ${chatResult.error}`);
+      }
 
-      const message = `✅ 完整流程完成！\n已拆分 ${splitResult.paragraphCount} 個段落並生成對話內容`;
-      SpreadsheetApp.getActive().toast(message, 'RepostLens Content', 8);
+      SpreadsheetApp.getActive().toast('步驟 3 完成，開始生成最終內容...', 'RepostLens Content', 2);
+
+      // 步驟 4: 生成最終內容
+      dlog(`[fullProcess] 步驟 4: 生成最終內容`);
+      const finalResult = processFinalContentSync(paragraphSheet);
+      
+      if (!finalResult.success) {
+        throw new Error(`最終內容生成失敗: ${finalResult.error}`);
+      }
+
+      const message = `✅ 完整流程完成！\n已拆分 ${splitResult.paragraphCount} 個段落\n生成對話內容: ${chatResult.successCount}/${chatResult.totalCount}\n生成最終內容: ${finalResult.successCount}/${finalResult.totalCount}`;
+      SpreadsheetApp.getActive().toast(message, 'RepostLens Content', 10);
 
     } catch (err) {
       const message = `完整流程錯誤: ${err.message}`;
@@ -622,7 +492,7 @@ const RepostLensContentGenerator = (() => {
 
 
 
-  const processChatContentAsync = (paragraphSheet) => {
+  const processChatContentSync = (paragraphSheet) => {
     const lastRow = paragraphSheet.getLastRow();
     if (lastRow < 2) {
       SpreadsheetApp.getActive().toast('段落 Sheet 沒有資料', 'RepostLens Content', 3);
@@ -703,19 +573,25 @@ const RepostLensContentGenerator = (() => {
 
       const successCount = result.metadata?.successCount || 0;
       const totalCount = result.metadata?.totalParagraphs || 0;
-      const message = `✅ 批量處理完成！成功生成 ${successCount}/${totalCount} 個對話內容`;
 
-      dlog(`[processChatContentAsync] ${message}`);
-      SpreadsheetApp.getActive().toast(message, 'RepostLens Content', 8);
+      dlog(`[processChatContentSync] 成功生成 ${successCount}/${totalCount} 個對話內容`);
+
+      return {
+        success: true,
+        successCount: successCount,
+        totalCount: totalCount
+      };
 
     } catch (error) {
-      const message = `批量處理錯誤: ${error.message}`;
-      dlog(`[processChatContentAsync] ${message}`);
-      SpreadsheetApp.getActive().toast(message, 'RepostLens Content', 8);
+      dlog(`[processChatContentSync] 錯誤: ${error.message}`);
+      return {
+        success: false,
+        error: error.message
+      };
     }
   };
 
-  const processFinalContentAsync = (paragraphSheet) => {
+  const processFinalContentSync = (paragraphSheet) => {
     const lastRow = paragraphSheet.getLastRow();
     if (lastRow < 3) {
       SpreadsheetApp.getActive().toast('段落 Sheet 資料不足', 'RepostLens Content', 3);
@@ -789,14 +665,20 @@ const RepostLensContentGenerator = (() => {
 
       SpreadsheetApp.flush();
 
-      const message = `✅ 批量處理完成！成功生成 ${successCount}/${paragraphColumns.length} 個最終內容`;
-      dlog(`[processFinalContentAsync] ${message}`);
-      SpreadsheetApp.getActive().toast(message, 'RepostLens Content', 8);
+      dlog(`[processFinalContentSync] 成功生成 ${successCount}/${paragraphColumns.length} 個最終內容`);
+
+      return {
+        success: true,
+        successCount: successCount,
+        totalCount: paragraphColumns.length
+      };
 
     } catch (error) {
-      const message = `批量處理錯誤: ${error.message}`;
-      dlog(`[processFinalContentAsync] ${message}`);
-      SpreadsheetApp.getActive().toast(message, 'RepostLens Content', 8);
+      dlog(`[processFinalContentSync] 錯誤: ${error.message}`);
+      return {
+        success: false,
+        error: error.message
+      };
     }
   };
 
@@ -821,10 +703,6 @@ const RepostLensContentGenerator = (() => {
   return {
     createMenu,
     checkOutputFormat,
-    generateDescriptionForActiveRow,
-    splitParagraphsForActiveRow,
-    generateChatContentBatch,
-    generateFinalContentBatch,
     fullProcessForActiveRow,
   };
 })();
@@ -833,26 +711,10 @@ function RL_CONTENT_onOpenMenu() {
   RepostLensContentGenerator.createMenu();
 }
 
-function RL_CONTENT_generateDescriptionForActiveRow() {
-  RepostLensContentGenerator.generateDescriptionForActiveRow();
-}
-
-function RL_CONTENT_splitParagraphsForActiveRow() {
-  RepostLensContentGenerator.splitParagraphsForActiveRow();
-}
-
-function RL_CONTENT_generateChatContentBatch() {
-  RepostLensContentGenerator.generateChatContentBatch();
-}
-
 function RL_CONTENT_fullProcessForActiveRow() {
   RepostLensContentGenerator.fullProcessForActiveRow();
 }
 
 function RL_CONTENT_checkOutputFormat() {
   RepostLensContentGenerator.checkOutputFormat();
-}
-
-function RL_CONTENT_generateFinalContentBatch() {
-  RepostLensContentGenerator.generateFinalContentBatch();
 }
