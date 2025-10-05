@@ -449,26 +449,23 @@ const RepostLensContentGenerator = (() => {
         sourceUrl = String(sheet.getRange(row, validation.urlColumn).getValue() || '').trim();
       }
 
-      // 嘗試從 PropertiesService 獲取 API 返回的段落列表
+      // 從 PropertiesService 獲取 API 返回的段落列表
       let paragraphs = [];
       
-      try {
-        const properties = PropertiesService.getScriptProperties();
-        const storedParagraphs = properties.getProperty(`PARAGRAPHS_ROW_${row}`);
+      const properties = PropertiesService.getScriptProperties();
+      const storedParagraphs = properties.getProperty(`PARAGRAPHS_ROW_${row}`);
+      
+      if (storedParagraphs) {
+        paragraphs = JSON.parse(storedParagraphs);
+        dlog(`[splitAndCreateParagraphSheet] 使用 API 返回的段落列表，共 ${paragraphs.length} 個段落`);
         
-        if (storedParagraphs) {
-          paragraphs = JSON.parse(storedParagraphs);
-          dlog(`[splitAndCreateParagraphSheet] 使用 API 返回的段落列表，共 ${paragraphs.length} 個段落`);
-          
-          // 清理已使用的資料
-          properties.deleteProperty(`PARAGRAPHS_ROW_${row}`);
-        } else {
-          // 回退到分割邏輯
-          paragraphs = splitContentByBulletPoints(descriptionContent);
-        }
-      } catch (e) {
-        dlog(`[splitAndCreateParagraphSheet] 無法讀取儲存的段落，使用分割邏輯: ${e.message}`);
-        paragraphs = splitContentByBulletPoints(descriptionContent);
+        // 清理已使用的資料
+        properties.deleteProperty(`PARAGRAPHS_ROW_${row}`);
+      } else {
+        return {
+          success: false,
+          error: '找不到 API 生成的段落資料，請重新生成段落描述'
+        };
       }
 
       if (paragraphs.length === 0) {
@@ -547,87 +544,7 @@ const RepostLensContentGenerator = (() => {
     }
   };
 
-  const splitContentByBulletPoints = (content) => {
-    // 優先按照 • 符號分割
-    if (content.includes('•')) {
-      const lines = content
-        .split(/\r?\n+/)
-        .map((line) => line.trim())
-        .filter((line) => line.length > 0);
 
-      const groups = [];
-      let current = [];
-
-      for (const line of lines) {
-        const isMainBullet = line.startsWith('•');
-        if (isMainBullet) {
-          if (current.length) groups.push(current.join('\n'));
-          current = [line];
-        } else if (current.length) {
-          current.push(line);
-        } else {
-          current = [line];
-        }
-      }
-
-      if (current.length) groups.push(current.join('\n'));
-
-      const filteredParagraphs = groups.filter((paragraph) => {
-        const cleaned = paragraph.trim();
-        return cleaned.length > 10 &&
-          !/^•?\s*-+$/.test(cleaned) &&
-          cleaned !== '•';
-      });
-
-      if (filteredParagraphs.length > 1) {
-        dlog(`[splitContentByBulletPoints] 依 • 群組分割，找到 ${filteredParagraphs.length} 個段落`);
-        return filteredParagraphs;
-      }
-    }
-
-    // 嘗試按照 --- 分隔符分割
-    if (content.includes('---')) {
-      const sections = content.split(/---+/).map(section => section.trim()).filter(section => section.length > 50);
-      
-      if (sections.length > 1) {
-        dlog(`[splitContentByBulletPoints] 按 --- 分割，找到 ${sections.length} 個段落`);
-        return sections;
-      }
-    }
-
-    // 嘗試按照主要 h2 標題分割（但要保持相關的 h3 在一起）
-    // 尋找獨立的 h2 段落，但不拆分緊密相關的 h2+h3 組合
-    const majorSectionPattern = /h2\s+[^h]*?(?=h2\s+(?!.*h3)|$)/gi;
-    const majorSections = [];
-    let match;
-
-    while ((match = majorSectionPattern.exec(content)) !== null) {
-      const section = match[0].trim();
-      if (section.length > 100) {
-        majorSections.push(section);
-      }
-    }
-
-    if (majorSections.length > 1) {
-      dlog(`[splitContentByBulletPoints] 按主要 h2 段落分割，找到 ${majorSections.length} 個段落`);
-      return majorSections;
-    }
-
-    // 回退到雙換行分割
-    const fallbackSections = content
-      .split(/\n\s*\n/)
-      .map(p => p.trim())
-      .filter(p => p.length > 100);
-
-    if (fallbackSections.length > 1) {
-      dlog(`[splitContentByBulletPoints] 使用雙換行分割，找到 ${fallbackSections.length} 個段落`);
-      return fallbackSections;
-    }
-
-    // 如果都沒有找到合適的分割點，返回整個內容作為單一段落
-    dlog(`[splitContentByBulletPoints] 無法分割，返回單一段落`);
-    return [content];
-  };
 
   const processChatContentAsync = (paragraphSheet) => {
     const lastRow = paragraphSheet.getLastRow();
