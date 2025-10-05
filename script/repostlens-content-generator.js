@@ -70,18 +70,27 @@ const RepostLensContentGenerator = (() => {
     SpreadsheetApp.getActive().toast('開始完整流程...', 'RepostLens Content', 3);
 
     try {
-      // 步驟 1: 拆分段落
-      dlog(`[fullProcess] 步驟 1: 拆分段落`);
+      // 步驟 1: 生成 SEO 難度分析
+      dlog(`[fullProcess] 步驟 1: 生成 SEO 難度分析`);
+      const descResult = processDescriptionGeneration(sheet, row, validation);
+      if (!descResult.success) {
+        throw new Error(`SEO 分析生成失敗: ${descResult.error}`);
+      }
+
+      SpreadsheetApp.getActive().toast('步驟 1 完成，開始拆分段落...', 'RepostLens Content', 2);
+
+      // 步驟 2: 拆分段落
+      dlog(`[fullProcess] 步驟 2: 拆分段落`);
       const descriptionContent = String(sheet.getRange(row, 7).getValue() || '').trim();
       const splitResult = splitAndCreateParagraphSheet(sheet, row, descriptionContent, validation);
       if (!splitResult.success) {
         throw new Error(`段落拆分失敗: ${splitResult.error}`);
       }
 
-      SpreadsheetApp.getActive().toast('步驟 1 完成，開始生成對話內容...', 'RepostLens Content', 2);
+      SpreadsheetApp.getActive().toast('步驟 2 完成，開始生成對話內容...', 'RepostLens Content', 2);
 
-      // 步驟 2: 生成對話內容
-      dlog(`[fullProcess] 步驟 2: 生成對話內容`);
+      // 步驟 3: 生成對話內容
+      dlog(`[fullProcess] 步驟 3: 生成對話內容`);
       const paragraphSheet = splitResult.paragraphSheet;
       const chatResult = processChatContentSync(paragraphSheet);
       
@@ -166,6 +175,117 @@ const RepostLensContentGenerator = (() => {
   };
 
 
+
+  const processDescriptionGeneration = (sheet, row, validation) => {
+    // 讀取 D 欄 (Outline) 和 F 欄 (Analysis)
+    const outlineText = String(sheet.getRange(row, validation.outlineColumn).getValue() || '').trim();
+    const analysisText = String(sheet.getRange(row, validation.analysisColumn).getValue() || '').trim();
+
+    if (!outlineText || !analysisText) {
+      return {
+        success: false,
+        error: 'D 欄或 F 欄內容為空'
+      };
+    }
+
+    dlog(`[processDescriptionGeneration] 第 ${row} 列 - Outline: ${outlineText.length} 字, Analysis: ${analysisText.length} 字`);
+
+    // 調用 SEO 分析 API
+    const result = callDescriptionAPI(analysisText, outlineText);
+
+    if (!result.success) {
+      return {
+        success: false,
+        error: result.error || 'SEO 分析生成失敗'
+      };
+    }
+
+    // 確保 G 欄存在
+    ensureContentColumn(sheet, validation);
+
+    // 寫入生成的內容到 G 欄
+    const contentCell = sheet.getRange(row, 7); // G 欄
+    const truncatedContent = truncateForCell(result.content, 50000);
+    contentCell.setValue(truncatedContent);
+
+    // 添加註解
+    try {
+      const paragraphCount = result.paragraphs ? result.paragraphs.length : 0;
+      contentCell.setNote(`SEO 難度分析 (${result.metadata?.contentLength || 0} 字)\n段落數: ${paragraphCount}\n生成時間: ${new Date().toLocaleString()}`);
+    } catch (e) {
+      // 忽略註解錯誤
+    }
+
+    SpreadsheetApp.flush();
+
+    return {
+      success: true,
+      contentLength: result.metadata?.contentLength || 0
+    };
+  };
+
+  const ensureContentColumn = (sheet, validation) => {
+    if (validation.contentColumn) {
+      return; // G 欄已存在
+    }
+
+    // 創建 G 欄標題
+    const headerCell = sheet.getRange(1, 7);
+    headerCell.setValue('SEO Analysis');
+
+    // 設定格式
+    try {
+      headerCell.setFontWeight('bold');
+      headerCell.setBackground('#f0f0f0');
+    } catch (e) {
+      // 忽略格式錯誤
+    }
+
+    dlog('[ensureContentColumn] 已創建 G 欄 "SEO Analysis"');
+  };
+
+  const callDescriptionAPI = (analysisText, outlineText) => {
+    const endpoint = getReportBase() + '/api/write/description';
+    const payload = {
+      analysisText,
+      outlineText
+    };
+
+    dlog(`[callDescriptionAPI] 調用 SEO 分析 API: ${endpoint}`);
+
+    try {
+      const res = UrlFetchApp.fetch(endpoint, {
+        method: 'POST',
+        contentType: 'application/json',
+        payload: JSON.stringify(payload),
+        muteHttpExceptions: true,
+      });
+
+      const responseCode = res.getResponseCode();
+      dlog(`[callDescriptionAPI] API 回應: ${responseCode}`);
+
+      if (responseCode < 200 || responseCode >= 300) {
+        const errorText = res.getContentText();
+        dlog(`[callDescriptionAPI] API 錯誤: ${errorText.slice(0, 200)}`);
+        throw new Error(`API 錯誤 ${responseCode}: ${errorText.slice(0, 100)}`);
+      }
+
+      const json = safeJson(res.getContentText());
+      if (!json || json.success !== true) {
+        throw new Error('API 回傳失敗');
+      }
+
+      dlog(`[callDescriptionAPI] 成功生成 SEO 分析: ${json.metadata?.contentLength || 0} 字`);
+      return json;
+
+    } catch (error) {
+      dlog(`[callDescriptionAPI] 錯誤: ${error.message}`);
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  };
 
   const callChatBatchAPI = (paragraphs) => {
     const endpoint = getReportBase() + '/api/write/chat';
