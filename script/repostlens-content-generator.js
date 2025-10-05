@@ -524,25 +524,37 @@ const RepostLensContentGenerator = (() => {
   const splitContentByBulletPoints = (content) => {
     // 優先按照 • 符號分割
     if (content.includes('•')) {
-      const sections = content.split('•').map(section => section.trim()).filter(section => section.length > 0);
-      
-      const paragraphs = sections.map((section, index) => {
-        if (index > 0 && !section.startsWith('•')) {
-          return '• ' + section;
-        }
-        return section;
-      });
+      const lines = content
+        .split(/\r?\n+/)
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0);
 
-      const filteredParagraphs = paragraphs.filter(p => {
-        const cleaned = p.trim();
+      const groups = [];
+      let current = [];
+
+      for (const line of lines) {
+        const isMainBullet = line.startsWith('•');
+        if (isMainBullet) {
+          if (current.length) groups.push(current.join('\n'));
+          current = [line];
+        } else if (current.length) {
+          current.push(line);
+        } else {
+          current = [line];
+        }
+      }
+
+      if (current.length) groups.push(current.join('\n'));
+
+      const filteredParagraphs = groups.filter((paragraph) => {
+        const cleaned = paragraph.trim();
         return cleaned.length > 10 &&
-          !cleaned.match(/^-+$/) &&
-          !cleaned.match(/^•?\s*-+\s*$/) &&
+          !/^•?\s*-+$/.test(cleaned) &&
           cleaned !== '•';
       });
 
       if (filteredParagraphs.length > 1) {
-        dlog(`[splitContentByBulletPoints] 按 • 分割，找到 ${filteredParagraphs.length} 個段落`);
+        dlog(`[splitContentByBulletPoints] 依 • 群組分割，找到 ${filteredParagraphs.length} 個段落`);
         return filteredParagraphs;
       }
     }
@@ -740,4 +752,3 @@ function RL_CONTENT_fullProcessForActiveRow() {
 function RL_CONTENT_checkOutputFormat() {
   RepostLensContentGenerator.checkOutputFormat();
 }
-
