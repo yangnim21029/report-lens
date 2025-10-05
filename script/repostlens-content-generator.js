@@ -93,7 +93,7 @@ const RepostLensContentGenerator = (() => {
       dlog(`[fullProcess] 步驟 3: 生成對話內容`);
       const paragraphSheet = splitResult.paragraphSheet;
       const chatResult = processChatContentSync(paragraphSheet);
-      
+
       if (!chatResult.success) {
         throw new Error(`對話內容生成失敗: ${chatResult.error}`);
       }
