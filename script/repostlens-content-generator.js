@@ -504,7 +504,7 @@ const RepostLensContentGenerator = (() => {
       });
 
       // 準備內容資料列 (第 3 列)
-      const contentRow = ['generate_content_output', '', '']; // Type, URL, Brand
+      const contentRow = ['generate_content_output', sourceUrl, '']; // Type, URL, Brand (空)
 
       // 添加空的 paragraph 欄位 (待生成對話內容)
       paragraphs.forEach(() => {
