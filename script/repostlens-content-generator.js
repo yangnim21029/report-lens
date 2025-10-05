@@ -345,14 +345,15 @@ const RepostLensContentGenerator = (() => {
     }
   };
 
-  const callFinalContentAPI = (paragraphOutput, generateContentOutput) => {
+  const callFinalContentBatchAPI = (paragraphOutputs, generateContentOutputs) => {
     const endpoint = getReportBase() + '/api/write/final-content';
     const payload = {
-      paragraphOutput,
-      generateContentOutput
+      paragraphOutputs,
+      generateContentOutputs
     };
 
-    dlog(`[callFinalContentAPI] 調用最終內容 API: ${endpoint}`);
+    dlog(`[callFinalContentBatchAPI] 調用批量最終內容 API: ${endpoint}`);
+    dlog(`[callFinalContentBatchAPI] Paragraphs count: ${paragraphOutputs.length}`);
 
     try {
       const res = UrlFetchApp.fetch(endpoint, {
@@ -363,11 +364,11 @@ const RepostLensContentGenerator = (() => {
       });
 
       const responseCode = res.getResponseCode();
-      dlog(`[callFinalContentAPI] API 回應: ${responseCode}`);
+      dlog(`[callFinalContentBatchAPI] API 回應: ${responseCode}`);
 
       if (responseCode < 200 || responseCode >= 300) {
         const errorText = res.getContentText();
-        dlog(`[callFinalContentAPI] API 錯誤: ${errorText.slice(0, 200)}`);
+        dlog(`[callFinalContentBatchAPI] API 錯誤: ${errorText.slice(0, 200)}`);
         throw new Error(`API 錯誤 ${responseCode}: ${errorText.slice(0, 100)}`);
       }
 
@@ -376,11 +377,11 @@ const RepostLensContentGenerator = (() => {
         throw new Error('API 回傳失敗');
       }
 
-      dlog(`[callFinalContentAPI] 成功生成最終內容: ${json.metadata?.contentLength || 0} 字`);
+      dlog(`[callFinalContentBatchAPI] 成功生成批量最終內容: ${json.metadata?.successCount}/${json.metadata?.totalParagraphs}`);
       return json;
 
     } catch (error) {
-      dlog(`[callFinalContentAPI] 錯誤: ${error.message}`);
+      dlog(`[callFinalContentBatchAPI] 錯誤: ${error.message}`);
       return {
         success: false,
         error: error.message
@@ -629,29 +630,36 @@ const RepostLensContentGenerator = (() => {
         generateContentOutputs.push(generateContentOutput);
       });
 
-      dlog(`[processFinalContentAsync] 準備處理 ${paragraphColumns.length} 個段落`);
+      // 過濾有效的段落
+      const validParagraphOutputs = paragraphOutputs.filter(p => p.length > 0);
+      const validGenerateContentOutputs = generateContentOutputs.filter(p => p.length > 0);
 
-      // 為每個段落生成最終內容
+      if (validParagraphOutputs.length === 0 || validGenerateContentOutputs.length === 0) {
+        throw new Error('沒有找到有效的段落內容');
+      }
+
+      dlog(`[processFinalContentSync] 準備處理 ${validParagraphOutputs.length} 個段落`);
+
+      // 調用批量 API
+      const result = callFinalContentBatchAPI(validParagraphOutputs, validGenerateContentOutputs);
+
+      if (!result.success) {
+        throw new Error(result.error || '批量處理失敗');
+      }
+
+      // 從結果中提取最終內容
       const finalContents = [];
-      let successCount = 0;
-
-      for (let i = 0; i < paragraphColumns.length; i++) {
-        if (paragraphOutputs[i] && generateContentOutputs[i]) {
-          const result = callFinalContentAPI(paragraphOutputs[i], generateContentOutputs[i]);
-          
-          if (result.success) {
-            finalContents.push(result.finalContent);
-            successCount++;
-            dlog(`[processFinalContentAsync] 段落 ${i + 1} 處理成功`);
-          } else {
-            finalContents.push('');
-            dlog(`[processFinalContentAsync] 段落 ${i + 1} 處理失敗: ${result.error}`);
-          }
+      result.results.forEach((res, index) => {
+        if (res.success) {
+          finalContents.push(res.finalContent || res.content);
+          dlog(`[processFinalContentSync] 段落 ${index + 1} 處理成功`);
         } else {
           finalContents.push('');
-          dlog(`[processFinalContentAsync] 段落 ${i + 1} 資料不完整，跳過`);
+          dlog(`[processFinalContentSync] 段落 ${index + 1} 處理失敗: ${res.error}`);
         }
-      }
+      });
+
+      const successCount = result.metadata?.successCount || 0;
 
       // 創建第 4 列來存放最終內容
       const finalRow = ['final_content_output', '', '']; // Type, URL, Brand
