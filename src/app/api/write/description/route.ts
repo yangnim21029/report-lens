@@ -83,11 +83,17 @@ h3 xxx
       );
     }
 
-    // 按 h2 拆分成段落列表
-    console.log(`[write/description] Original content: ${generatedContent.substring(0, 200)}...`);
+    // 清理內容：移除 --- 分隔符避免干擾 h2 分割
+    const cleanedContent = generatedContent.replace(/^---+\s*$/gm, '').trim();
+    console.log(`[write/description] Original content: ${cleanedContent.substring(0, 200)}...`);
     
-    // 先嘗試按 h2 分割
-    const h2Sections = generatedContent.split(/(?=h2\s)/i).filter(section => section.trim().length > 50);
+    // 檢查是否移除了分隔符
+    if (generatedContent !== cleanedContent) {
+      console.log(`[write/description] Removed --- separators from content`);
+    }
+    
+    // 先嘗試按 h2 分割 (使用清理後的內容)
+    const h2Sections = cleanedContent.split(/(?=h2\s)/i).filter(section => section.trim().length > 50);
     
     let paragraphs = [];
     
@@ -99,14 +105,14 @@ h3 xxx
       console.log(`[write/description] No h2 found, trying alternative splitting`);
       
       // 嘗試按雙換行分割
-      const doubleLine = generatedContent.split(/\n\s*\n/).filter(section => section.trim().length > 100);
+      const doubleLine = cleanedContent.split(/\n\s*\n/).filter(section => section.trim().length > 100);
       
       if (doubleLine.length > 1) {
         paragraphs = doubleLine.map(section => section.trim());
         console.log(`[write/description] Split by double newlines: found ${paragraphs.length} sections`);
       } else {
         // 最後回退到單一段落
-        paragraphs = [generatedContent];
+        paragraphs = [cleanedContent];
         console.log(`[write/description] No splitting possible, using single paragraph`);
       }
     }
@@ -115,12 +121,12 @@ h3 xxx
 
     return NextResponse.json({
       success: true,
-      content: generatedContent,
-      description: generatedContent,
+      content: cleanedContent,
+      description: cleanedContent,
       paragraphs: paragraphs,
       metadata: {
         totalParagraphs: paragraphs.length,
-        contentLength: generatedContent.length,
+        contentLength: cleanedContent.length,
         model: "gpt-5-mini-2025-08-07"
       }
     });
