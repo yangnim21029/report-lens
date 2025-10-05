@@ -39,7 +39,7 @@ export async function POST(req: Request) {
       }
 
       try {
-        const structurePrompt = `
+        const structurePrompt = `你是社群、SEO 內容專家
         
         # 任務目標:
         撰寫一篇關於指定主題的文章。

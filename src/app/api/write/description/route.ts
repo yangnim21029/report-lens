@@ -21,7 +21,9 @@ export async function POST(req: Request) {
     }
 
     // 使用你的原始 prompt template
-    const descriptionPrompt = `目標設定如此：${analyseResult}
+    const descriptionPrompt = `你是資深的內容行銷廣告設計師
+    
+    目標設定如此：${analyseResult}
     
     ----
 把大綱中的每一段h2h3要寫什麼，用一段話說明在[...]內，需要能幫我排名 SEO
