@@ -84,23 +84,34 @@ h3 xxx
     }
 
     // 按 h2 拆分成段落列表
-    const h2Pattern = /h2\s+([^h]*?)(?=h2|$)/gi;
-    const paragraphs = [];
-    let match;
-
-    while ((match = h2Pattern.exec(generatedContent)) !== null) {
-      const section = match[0].trim();
-      if (section.length > 50) {
-        paragraphs.push(section);
+    console.log(`[write/description] Original content: ${generatedContent.substring(0, 200)}...`);
+    
+    // 先嘗試按 h2 分割
+    const h2Sections = generatedContent.split(/(?=h2\s)/i).filter(section => section.trim().length > 50);
+    
+    let paragraphs = [];
+    
+    if (h2Sections.length > 1) {
+      paragraphs = h2Sections.map(section => section.trim());
+      console.log(`[write/description] Split by h2: found ${paragraphs.length} sections`);
+    } else {
+      // 如果沒有 h2，嘗試按其他方式分割
+      console.log(`[write/description] No h2 found, trying alternative splitting`);
+      
+      // 嘗試按雙換行分割
+      const doubleLine = generatedContent.split(/\n\s*\n/).filter(section => section.trim().length > 100);
+      
+      if (doubleLine.length > 1) {
+        paragraphs = doubleLine.map(section => section.trim());
+        console.log(`[write/description] Split by double newlines: found ${paragraphs.length} sections`);
+      } else {
+        // 最後回退到單一段落
+        paragraphs = [generatedContent];
+        console.log(`[write/description] No splitting possible, using single paragraph`);
       }
     }
 
-    // 如果沒有找到 h2，返回整個內容作為單一段落
-    if (paragraphs.length === 0) {
-      paragraphs.push(generatedContent);
-    }
-
-    console.log(`[write/description] Generated ${paragraphs.length} paragraphs from h2 sections`);
+    console.log(`[write/description] Final paragraphs count: ${paragraphs.length}`);
 
     return NextResponse.json({
       success: true,
