@@ -24,7 +24,7 @@ const RepostLensContentGenerator = (() => {
       .createMenu('RepostLens Content')
       .addItem('1. 生成段落描述 (當前列)', 'RL_CONTENT_generateDescriptionForActiveRow')
       .addItem('2. 拆分段落到新 Sheet', 'RL_CONTENT_splitParagraphsForActiveRow')
-      .addItem('3. 生成對話內容 (異步)', 'RL_CONTENT_generateChatContentAsync')
+      .addItem('3. 生成對話內容 (批量)', 'RL_CONTENT_generateChatContentBatch')
       .addSeparator()
       .addItem('完整流程 (當前列)', 'RL_CONTENT_fullProcessForActiveRow')
       .addSeparator()
@@ -105,8 +105,15 @@ const RepostLensContentGenerator = (() => {
       return;
     }
 
+    // 驗證格式
+    const validation = validateOutputSheetFormat(sheet);
+    if (!validation.isValid) {
+      SpreadsheetApp.getUi().alert(`Sheet 格式不正確: ${validation.error}`);
+      return;
+    }
+
     try {
-      const result = splitAndCreateParagraphSheet(sheet, row, descriptionContent);
+      const result = splitAndCreateParagraphSheet(sheet, row, descriptionContent, validation);
       const message = result.success
         ? `✅ 成功拆分 ${result.paragraphCount} 個段落到新 Sheet`
         : `❌ 拆分失敗: ${result.error}`;
@@ -120,7 +127,7 @@ const RepostLensContentGenerator = (() => {
     }
   };
 
-  const generateChatContentAsync = () => {
+  const generateChatContentBatch = () => {
     const sheet = SpreadsheetApp.getActiveSheet();
 
     // 檢查是否是段落 sheet
@@ -135,10 +142,14 @@ const RepostLensContentGenerator = (() => {
       return;
     }
 
+    // 分析段落數量
+    const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+    const paragraphCount = headers.filter(h => String(h || '').toLowerCase().startsWith('paragraph_')).length;
+
     // 確認是否要處理所有段落
     const response = SpreadsheetApp.getUi().showYesNoDialog(
       'RepostLens Content',
-      `確定要為所有 ${lastRow - 1} 個段落生成對話內容嗎？\n\n這可能需要較長時間。`,
+      `確定要為 ${paragraphCount} 個段落批量生成對話內容嗎？\n\n將使用 AI 批量處理。`,
       SpreadsheetApp.getUi().ButtonSet.YES_NO
     );
 
@@ -181,7 +192,7 @@ const RepostLensContentGenerator = (() => {
       // 步驟 2: 拆分段落
       dlog(`[fullProcess] 步驟 2: 拆分段落`);
       const descriptionContent = String(sheet.getRange(row, 7).getValue() || '').trim();
-      const splitResult = splitAndCreateParagraphSheet(sheet, row, descriptionContent);
+      const splitResult = splitAndCreateParagraphSheet(sheet, row, descriptionContent, validation);
       if (!splitResult.success) {
         throw new Error(`段落拆分失敗: ${splitResult.error}`);
       }
@@ -193,7 +204,7 @@ const RepostLensContentGenerator = (() => {
       const paragraphSheet = splitResult.paragraphSheet;
       processChatContentAsync(paragraphSheet);
 
-      const message = `✅ 完整流程啟動成功！\n已拆分 ${splitResult.paragraphCount} 個段落\n正在異步生成對話內容...`;
+      const message = `✅ 完整流程完成！\n已拆分 ${splitResult.paragraphCount} 個段落並生成對話內容`;
       SpreadsheetApp.getActive().toast(message, 'RepostLens Content', 8);
 
     } catch (err) {
@@ -213,7 +224,14 @@ const RepostLensContentGenerator = (() => {
         };
       }
 
-      const headerValues = sheet.getRange(1, 1, 1, Math.max(lastColumn, 7)).getValues()[0] || [];
+      const headerValues = sheet.getRange(1, 1, 1, Math.max(lastColumn, 8)).getValues()[0] || [];
+
+      // 檢查 A 欄 (URL)
+      const urlHeader = String(headerValues[0] || '').trim();
+      let urlColumn = null;
+      if (urlHeader.toLowerCase().includes('url') || urlHeader.toLowerCase().includes('link')) {
+        urlColumn = 1; // A 欄
+      }
 
       // 檢查 D 欄 (Outline Summary)
       const outlineHeader = String(headerValues[3] || '').trim();
@@ -245,6 +263,7 @@ const RepostLensContentGenerator = (() => {
 
       return {
         isValid: true,
+        urlColumn,
         outlineColumn: 4, // D 欄
         outlineHeader,
         analysisColumn: 6, // F 欄  
@@ -371,15 +390,15 @@ const RepostLensContentGenerator = (() => {
     }
   };
 
-  const callChatAndStructureAPI = (paragraph, brand = '') => {
+  const callChatAndStructureBatchAPI = (paragraphs, brand = '') => {
     const endpoint = getReportBase() + '/api/write/chat-and-structure';
     const payload = {
-      paragraph,
+      paragraphs,
       brand
     };
 
-    dlog(`[callChatAndStructureAPI] 調用對話結構 API: ${endpoint}`);
-    dlog(`[callChatAndStructureAPI] Brand: ${brand}, Paragraph length: ${paragraph.length}`);
+    dlog(`[callChatAndStructureBatchAPI] 調用批量對話結構 API: ${endpoint}`);
+    dlog(`[callChatAndStructureBatchAPI] Brand: ${brand}, Paragraphs count: ${paragraphs.length}`);
 
     try {
       const res = UrlFetchApp.fetch(endpoint, {
@@ -390,11 +409,11 @@ const RepostLensContentGenerator = (() => {
       });
 
       const responseCode = res.getResponseCode();
-      dlog(`[callChatAndStructureAPI] API 回應: ${responseCode}`);
+      dlog(`[callChatAndStructureBatchAPI] API 回應: ${responseCode}`);
 
       if (responseCode < 200 || responseCode >= 300) {
         const errorText = res.getContentText();
-        dlog(`[callChatAndStructureAPI] API 錯誤: ${errorText.slice(0, 200)}`);
+        dlog(`[callChatAndStructureBatchAPI] API 錯誤: ${errorText.slice(0, 200)}`);
         throw new Error(`API 錯誤 ${responseCode}: ${errorText.slice(0, 100)}`);
       }
 
@@ -403,11 +422,11 @@ const RepostLensContentGenerator = (() => {
         throw new Error('API 回傳失敗');
       }
 
-      dlog(`[callChatAndStructureAPI] 成功生成對話內容: ${json.metadata?.contentLength || 0} 字`);
+      dlog(`[callChatAndStructureBatchAPI] 成功生成批量對話內容: ${json.metadata?.successCount}/${json.metadata?.totalParagraphs}`);
       return json;
 
     } catch (error) {
-      dlog(`[callChatAndStructureAPI] 錯誤: ${error.message}`);
+      dlog(`[callChatAndStructureBatchAPI] 錯誤: ${error.message}`);
       return {
         success: false,
         error: error.message
@@ -415,13 +434,16 @@ const RepostLensContentGenerator = (() => {
     }
   };
 
-  const splitAndCreateParagraphSheet = (sheet, row, descriptionContent) => {
+  const splitAndCreateParagraphSheet = (sheet, row, descriptionContent, validation) => {
     try {
-      // 拆分段落 (以雙換行符號分割)
-      const paragraphs = descriptionContent
-        .split(/\n\s*\n/)
-        .map(p => p.trim())
-        .filter(p => p.length > 0);
+      // 獲取 URL (如果有的話)
+      let sourceUrl = '';
+      if (validation.urlColumn) {
+        sourceUrl = String(sheet.getRange(row, validation.urlColumn).getValue() || '').trim();
+      }
+
+      // 智能拆分段落：以 h2/h3 標題為分界點
+      const paragraphs = splitContentByHeadings(descriptionContent);
 
       if (paragraphs.length === 0) {
         return {
@@ -437,8 +459,13 @@ const RepostLensContentGenerator = (() => {
 
       const paragraphSheet = spreadsheet.insertSheet(sheetName);
 
-      // 設定標題列
-      const headers = ['Index', 'Paragraph', 'Brand', 'Generated Content'];
+      // 動態生成標題列
+      const headers = ['URL', 'Brand'];
+      const paragraphHeaders = paragraphs.map((_, index) => `paragraph_${index + 1}`);
+      const contentHeaders = paragraphs.map((_, index) => `content_${index + 1}`);
+      
+      headers.push(...paragraphHeaders, ...contentHeaders);
+      
       paragraphSheet.getRange(1, 1, 1, headers.length).setValues([headers]);
 
       // 設定標題格式
@@ -446,23 +473,35 @@ const RepostLensContentGenerator = (() => {
       headerRange.setFontWeight('bold');
       headerRange.setBackground('#f0f0f0');
 
-      // 寫入段落資料
-      const data = paragraphs.map((paragraph, index) => [
-        index + 1,
-        paragraph,
-        '', // Brand 欄位留空，可手動填入
-        ''  // Generated Content 欄位留空，待生成
-      ]);
+      // 準備資料列
+      const dataRow = [sourceUrl, '']; // URL 和 Brand
+      
+      // 添加段落內容
+      paragraphs.forEach(paragraph => {
+        dataRow.push(paragraph);
+      });
+      
+      // 添加空的 content 欄位
+      paragraphs.forEach(() => {
+        dataRow.push('');
+      });
 
-      if (data.length > 0) {
-        paragraphSheet.getRange(2, 1, data.length, headers.length).setValues(data);
-      }
+      // 寫入資料
+      paragraphSheet.getRange(2, 1, 1, dataRow.length).setValues([dataRow]);
 
       // 調整欄寬
-      paragraphSheet.setColumnWidth(1, 60);  // Index
-      paragraphSheet.setColumnWidth(2, 400); // Paragraph
-      paragraphSheet.setColumnWidth(3, 100); // Brand
-      paragraphSheet.setColumnWidth(4, 400); // Generated Content
+      paragraphSheet.setColumnWidth(1, 200); // URL
+      paragraphSheet.setColumnWidth(2, 100); // Brand
+      
+      // 段落欄位
+      for (let i = 0; i < paragraphs.length; i++) {
+        paragraphSheet.setColumnWidth(3 + i, 300);
+      }
+      
+      // 內容欄位
+      for (let i = 0; i < paragraphs.length; i++) {
+        paragraphSheet.setColumnWidth(3 + paragraphs.length + i, 400);
+      }
 
       dlog(`[splitAndCreateParagraphSheet] 成功創建 Sheet: ${sheetName}, 段落數: ${paragraphs.length}`);
 
@@ -482,6 +521,70 @@ const RepostLensContentGenerator = (() => {
     }
   };
 
+  const splitContentByHeadings = (content) => {
+    // 先嘗試以 markdown 標題分割
+    const headingPattern = /^(#{2,3})\s+(.+)$/gm;
+    const sections = [];
+    let lastIndex = 0;
+    let match;
+
+    while ((match = headingPattern.exec(content)) !== null) {
+      // 如果不是第一個標題，保存前一個段落
+      if (lastIndex < match.index) {
+        const prevSection = content.slice(lastIndex, match.index).trim();
+        if (prevSection) {
+          sections.push(prevSection);
+        }
+      }
+      lastIndex = match.index;
+    }
+
+    // 添加最後一個段落
+    if (lastIndex < content.length) {
+      const lastSection = content.slice(lastIndex).trim();
+      if (lastSection) {
+        sections.push(lastSection);
+      }
+    }
+
+    // 如果沒有找到標題，則使用雙換行分割
+    if (sections.length === 0) {
+      return content
+        .split(/\n\s*\n/)
+        .map(p => p.trim())
+        .filter(p => p.length > 50); // 過濾太短的段落
+    }
+
+    // 過濾太短的段落並合併相鄰的短段落
+    const filteredSections = [];
+    let currentSection = '';
+
+    for (const section of sections) {
+      if (section.length < 100 && currentSection) {
+        // 短段落合併到前一個段落
+        currentSection += '\n\n' + section;
+      } else if (section.length < 100) {
+        // 短段落暫存
+        currentSection = section;
+      } else {
+        // 長段落
+        if (currentSection) {
+          filteredSections.push(currentSection + '\n\n' + section);
+          currentSection = '';
+        } else {
+          filteredSections.push(section);
+        }
+      }
+    }
+
+    // 添加最後的段落
+    if (currentSection) {
+      filteredSections.push(currentSection);
+    }
+
+    return filteredSections.filter(p => p.length > 0);
+  };
+
   const processChatContentAsync = (paragraphSheet) => {
     const lastRow = paragraphSheet.getLastRow();
     if (lastRow < 2) {
@@ -489,28 +592,84 @@ const RepostLensContentGenerator = (() => {
       return;
     }
 
-    SpreadsheetApp.getActive().toast('開始異步生成對話內容...', 'RepostLens Content', 3);
+    // 分析 sheet 結構來找出段落欄位
+    const headers = paragraphSheet.getRange(1, 1, 1, paragraphSheet.getLastColumn()).getValues()[0];
+    const paragraphColumns = [];
+    const contentColumns = [];
 
-    // 使用 time-driven trigger 來異步處理
-    const functionName = 'RL_CONTENT_processChatContentBatch';
-    const sheetId = paragraphSheet.getSheetId();
-
-    // 儲存處理狀態到 PropertiesService
-    const properties = PropertiesService.getScriptProperties();
-    properties.setProperties({
-      'CHAT_PROCESS_SHEET_ID': String(sheetId),
-      'CHAT_PROCESS_CURRENT_ROW': '2',
-      'CHAT_PROCESS_TOTAL_ROWS': String(lastRow),
-      'CHAT_PROCESS_START_TIME': String(Date.now())
+    headers.forEach((header, index) => {
+      const headerStr = String(header || '').toLowerCase();
+      if (headerStr.startsWith('paragraph_')) {
+        paragraphColumns.push(index + 1);
+      } else if (headerStr.startsWith('content_')) {
+        contentColumns.push(index + 1);
+      }
     });
 
-    // 創建 trigger
-    ScriptApp.newTrigger(functionName)
-      .timeBased()
-      .after(1000) // 1 秒後開始
-      .create();
+    if (paragraphColumns.length === 0) {
+      SpreadsheetApp.getActive().toast('找不到段落欄位 (paragraph_*)', 'RepostLens Content', 5);
+      return;
+    }
 
-    dlog(`[processChatContentAsync] 已設定異步處理 trigger, Sheet ID: ${sheetId}, 總列數: ${lastRow}`);
+    SpreadsheetApp.getActive().toast('開始批量生成對話內容...', 'RepostLens Content', 3);
+
+    try {
+      // 讀取所有段落內容
+      const paragraphs = [];
+      const brand = String(paragraphSheet.getRange(2, 2).getValue() || '').trim(); // Brand 在第 2 欄
+
+      paragraphColumns.forEach(column => {
+        const paragraph = String(paragraphSheet.getRange(2, column).getValue() || '').trim();
+        paragraphs.push(paragraph);
+      });
+
+      // 過濾空段落
+      const validParagraphs = paragraphs.filter(p => p.length > 0);
+      
+      if (validParagraphs.length === 0) {
+        SpreadsheetApp.getActive().toast('沒有找到有效的段落內容', 'RepostLens Content', 5);
+        return;
+      }
+
+      dlog(`[processChatContentAsync] 準備處理 ${validParagraphs.length} 個段落`);
+
+      // 調用批量 API
+      const result = callChatAndStructureBatchAPI(validParagraphs, brand);
+
+      if (!result.success) {
+        throw new Error(result.error || '批量處理失敗');
+      }
+
+      // 寫入結果到對應的 content 欄位
+      result.results.forEach((res, index) => {
+        if (index < contentColumns.length && res.success) {
+          const contentColumn = contentColumns[index];
+          const contentCell = paragraphSheet.getRange(2, contentColumn);
+          const truncatedContent = truncateForCell(res.content, 50000);
+          contentCell.setValue(truncatedContent);
+
+          try {
+            contentCell.setNote(`對話內容 (${res.metadata?.contentLength || 0} 字)\n生成時間: ${new Date().toLocaleString()}`);
+          } catch (e) {
+            // 忽略註解錯誤
+          }
+        }
+      });
+
+      SpreadsheetApp.flush();
+
+      const successCount = result.metadata?.successCount || 0;
+      const totalCount = result.metadata?.totalParagraphs || 0;
+      const message = `✅ 批量處理完成！成功生成 ${successCount}/${totalCount} 個對話內容`;
+      
+      dlog(`[processChatContentAsync] ${message}`);
+      SpreadsheetApp.getActive().toast(message, 'RepostLens Content', 8);
+
+    } catch (error) {
+      const message = `批量處理錯誤: ${error.message}`;
+      dlog(`[processChatContentAsync] ${message}`);
+      SpreadsheetApp.getActive().toast(message, 'RepostLens Content', 8);
+    }
   };
 
   // === 輔助函數 ===
@@ -536,70 +695,9 @@ const RepostLensContentGenerator = (() => {
     checkOutputFormat,
     generateDescriptionForActiveRow,
     splitParagraphsForActiveRow,
-    generateChatContentAsync,
+    generateChatContentBatch,
     fullProcessForActiveRow,
-    processChatContentBatch: (sheetId, currentRow) => {
-      // 這個函數會被 trigger 調用
-      try {
-        const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
-        const sheet = spreadsheet.getSheets().find(s => s.getSheetId() === sheetId);
 
-        if (!sheet) {
-          throw new Error(`找不到 Sheet ID: ${sheetId}`);
-        }
-
-        const properties = PropertiesService.getScriptProperties();
-        const totalRows = parseInt(properties.getProperty('CHAT_PROCESS_TOTAL_ROWS') || '0');
-
-        if (currentRow > totalRows) {
-          // 處理完成
-          properties.deleteProperty('CHAT_PROCESS_SHEET_ID');
-          properties.deleteProperty('CHAT_PROCESS_CURRENT_ROW');
-          properties.deleteProperty('CHAT_PROCESS_TOTAL_ROWS');
-          properties.deleteProperty('CHAT_PROCESS_START_TIME');
-
-          SpreadsheetApp.getActive().toast('✅ 所有對話內容生成完成！', 'RepostLens Content', 5);
-          return;
-        }
-
-        // 處理當前列
-        const paragraph = String(sheet.getRange(currentRow, 2).getValue() || '').trim();
-        const brand = String(sheet.getRange(currentRow, 3).getValue() || '').trim();
-
-        if (paragraph) {
-          const result = callChatAndStructureAPI(paragraph, brand);
-
-          if (result.success) {
-            const contentCell = sheet.getRange(currentRow, 4);
-            const truncatedContent = truncateForCell(result.content, 50000);
-            contentCell.setValue(truncatedContent);
-
-            try {
-              contentCell.setNote(`對話內容 (${result.metadata?.contentLength || 0} 字)\n生成時間: ${new Date().toLocaleString()}`);
-            } catch (e) {
-              // 忽略註解錯誤
-            }
-          }
-        }
-
-        // 更新進度並設定下一次處理
-        const nextRow = currentRow + 1;
-        properties.setProperty('CHAT_PROCESS_CURRENT_ROW', String(nextRow));
-
-        // 設定下一次 trigger (延遲 2 秒避免 API 限制)
-        ScriptApp.newTrigger('RL_CONTENT_processChatContentBatch')
-          .timeBased()
-          .after(2000)
-          .create();
-
-        const progress = Math.round(((currentRow - 1) / (totalRows - 1)) * 100);
-        SpreadsheetApp.getActive().toast(`處理進度: ${progress}% (${currentRow - 1}/${totalRows - 1})`, 'RepostLens Content', 2);
-
-      } catch (error) {
-        dlog(`[processChatContentBatch] 錯誤: ${error.message}`);
-        SpreadsheetApp.getActive().toast(`批次處理錯誤: ${error.message}`, 'RepostLens Content', 5);
-      }
-    }
   };
 })();
 
@@ -615,8 +713,8 @@ function RL_CONTENT_splitParagraphsForActiveRow() {
   RepostLensContentGenerator.splitParagraphsForActiveRow();
 }
 
-function RL_CONTENT_generateChatContentAsync() {
-  RepostLensContentGenerator.generateChatContentAsync();
+function RL_CONTENT_generateChatContentBatch() {
+  RepostLensContentGenerator.generateChatContentBatch();
 }
 
 function RL_CONTENT_fullProcessForActiveRow() {
@@ -627,12 +725,3 @@ function RL_CONTENT_checkOutputFormat() {
   RepostLensContentGenerator.checkOutputFormat();
 }
 
-function RL_CONTENT_processChatContentBatch() {
-  const properties = PropertiesService.getScriptProperties();
-  const sheetId = parseInt(properties.getProperty('CHAT_PROCESS_SHEET_ID') || '0');
-  const currentRow = parseInt(properties.getProperty('CHAT_PROCESS_CURRENT_ROW') || '2');
-
-  if (sheetId && currentRow) {
-    RepostLensContentGenerator.processChatContentBatch(sheetId, currentRow);
-  }
-}
