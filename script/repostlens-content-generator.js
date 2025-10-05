@@ -25,6 +25,7 @@ const RepostLensContentGenerator = (() => {
       .addItem('1. 生成段落描述 (當前列)', 'RL_CONTENT_generateDescriptionForActiveRow')
       .addItem('2. 拆分段落到新 Sheet', 'RL_CONTENT_splitParagraphsForActiveRow')
       .addItem('3. 生成對話內容 (批量)', 'RL_CONTENT_generateChatContentBatch')
+      .addItem('4. 生成最終內容 (批量)', 'RL_CONTENT_generateFinalContentBatch')
       .addSeparator()
       .addItem('完整流程 (當前列)', 'RL_CONTENT_fullProcessForActiveRow')
       .addSeparator()
@@ -158,6 +159,39 @@ const RepostLensContentGenerator = (() => {
     }
 
     processChatContentAsync(sheet);
+  };
+
+  const generateFinalContentBatch = () => {
+    const sheet = SpreadsheetApp.getActiveSheet();
+
+    // 檢查是否是段落 sheet
+    if (!sheet.getName().includes('Paragraphs')) {
+      SpreadsheetApp.getUi().alert('請切換到段落 Sheet (名稱包含 "Paragraphs")');
+      return;
+    }
+
+    const lastRow = sheet.getLastRow();
+    if (lastRow < 3) {
+      SpreadsheetApp.getUi().alert('段落 Sheet 需要至少 3 列資料（標題、paragraph_output、generate_content_output）');
+      return;
+    }
+
+    // 分析段落數量
+    const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+    const paragraphCount = headers.filter(h => String(h || '').toLowerCase().startsWith('paragraph_')).length;
+
+    // 確認是否要處理所有段落
+    const response = SpreadsheetApp.getUi().showYesNoDialog(
+      'RepostLens Content',
+      `確定要為 ${paragraphCount} 個段落批量生成最終內容嗎？\n\n將使用 AI 批量處理。`,
+      SpreadsheetApp.getUi().ButtonSet.YES_NO
+    );
+
+    if (response !== SpreadsheetApp.getUi().Button.YES) {
+      return;
+    }
+
+    processFinalContentAsync(sheet);
   };
 
   const fullProcessForActiveRow = () => {
@@ -441,6 +475,49 @@ const RepostLensContentGenerator = (() => {
     }
   };
 
+  const callFinalContentAPI = (paragraphOutput, generateContentOutput) => {
+    const endpoint = getReportBase() + '/api/write/final-content';
+    const payload = {
+      paragraphOutput,
+      generateContentOutput
+    };
+
+    dlog(`[callFinalContentAPI] 調用最終內容 API: ${endpoint}`);
+
+    try {
+      const res = UrlFetchApp.fetch(endpoint, {
+        method: 'POST',
+        contentType: 'application/json',
+        payload: JSON.stringify(payload),
+        muteHttpExceptions: true,
+      });
+
+      const responseCode = res.getResponseCode();
+      dlog(`[callFinalContentAPI] API 回應: ${responseCode}`);
+
+      if (responseCode < 200 || responseCode >= 300) {
+        const errorText = res.getContentText();
+        dlog(`[callFinalContentAPI] API 錯誤: ${errorText.slice(0, 200)}`);
+        throw new Error(`API 錯誤 ${responseCode}: ${errorText.slice(0, 100)}`);
+      }
+
+      const json = safeJson(res.getContentText());
+      if (!json || json.success !== true) {
+        throw new Error('API 回傳失敗');
+      }
+
+      dlog(`[callFinalContentAPI] 成功生成最終內容: ${json.metadata?.contentLength || 0} 字`);
+      return json;
+
+    } catch (error) {
+      dlog(`[callFinalContentAPI] 錯誤: ${error.message}`);
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  };
+
   const splitAndCreateParagraphSheet = (sheet, row, _descriptionContent, validation) => {
     try {
       // 獲取 URL (如果有的話)
@@ -638,6 +715,91 @@ const RepostLensContentGenerator = (() => {
     }
   };
 
+  const processFinalContentAsync = (paragraphSheet) => {
+    const lastRow = paragraphSheet.getLastRow();
+    if (lastRow < 3) {
+      SpreadsheetApp.getActive().toast('段落 Sheet 資料不足', 'RepostLens Content', 3);
+      return;
+    }
+
+    // 分析 sheet 結構來找出段落欄位
+    const headers = paragraphSheet.getRange(1, 1, 1, paragraphSheet.getLastColumn()).getValues()[0];
+    const paragraphColumns = [];
+
+    headers.forEach((header, index) => {
+      const headerStr = String(header || '').toLowerCase();
+      if (headerStr.startsWith('paragraph_')) {
+        paragraphColumns.push(index + 1);
+      }
+    });
+
+    if (paragraphColumns.length === 0) {
+      SpreadsheetApp.getActive().toast('找不到段落欄位 (paragraph_*)', 'RepostLens Content', 5);
+      return;
+    }
+
+    SpreadsheetApp.getActive().toast('開始批量生成最終內容...', 'RepostLens Content', 3);
+
+    try {
+      // 讀取 paragraph_output (第 2 列) 和 generate_content_output (第 3 列)
+      const paragraphOutputs = [];
+      const generateContentOutputs = [];
+
+      paragraphColumns.forEach(column => {
+        const paragraphOutput = String(paragraphSheet.getRange(2, column).getValue() || '').trim();
+        const generateContentOutput = String(paragraphSheet.getRange(3, column).getValue() || '').trim();
+        
+        paragraphOutputs.push(paragraphOutput);
+        generateContentOutputs.push(generateContentOutput);
+      });
+
+      dlog(`[processFinalContentAsync] 準備處理 ${paragraphColumns.length} 個段落`);
+
+      // 為每個段落生成最終內容
+      const finalContents = [];
+      let successCount = 0;
+
+      for (let i = 0; i < paragraphColumns.length; i++) {
+        if (paragraphOutputs[i] && generateContentOutputs[i]) {
+          const result = callFinalContentAPI(paragraphOutputs[i], generateContentOutputs[i]);
+          
+          if (result.success) {
+            finalContents.push(result.finalContent);
+            successCount++;
+            dlog(`[processFinalContentAsync] 段落 ${i + 1} 處理成功`);
+          } else {
+            finalContents.push('');
+            dlog(`[processFinalContentAsync] 段落 ${i + 1} 處理失敗: ${result.error}`);
+          }
+        } else {
+          finalContents.push('');
+          dlog(`[processFinalContentAsync] 段落 ${i + 1} 資料不完整，跳過`);
+        }
+      }
+
+      // 創建第 4 列來存放最終內容
+      const finalRow = ['final_content_output', '', '']; // Type, URL, Brand
+      
+      finalContents.forEach(content => {
+        finalRow.push(content);
+      });
+
+      // 寫入第 4 列
+      paragraphSheet.getRange(4, 1, 1, finalRow.length).setValues([finalRow]);
+
+      SpreadsheetApp.flush();
+
+      const message = `✅ 批量處理完成！成功生成 ${successCount}/${paragraphColumns.length} 個最終內容`;
+      dlog(`[processFinalContentAsync] ${message}`);
+      SpreadsheetApp.getActive().toast(message, 'RepostLens Content', 8);
+
+    } catch (error) {
+      const message = `批量處理錯誤: ${error.message}`;
+      dlog(`[processFinalContentAsync] ${message}`);
+      SpreadsheetApp.getActive().toast(message, 'RepostLens Content', 8);
+    }
+  };
+
   // === 輔助函數 ===
 
   const truncateForCell = (value, maxLen = 50000) => {
@@ -662,8 +824,8 @@ const RepostLensContentGenerator = (() => {
     generateDescriptionForActiveRow,
     splitParagraphsForActiveRow,
     generateChatContentBatch,
+    generateFinalContentBatch,
     fullProcessForActiveRow,
-
   };
 })();
 
@@ -689,4 +851,8 @@ function RL_CONTENT_fullProcessForActiveRow() {
 
 function RL_CONTENT_checkOutputFormat() {
   RepostLensContentGenerator.checkOutputFormat();
+}
+
+function RL_CONTENT_generateFinalContentBatch() {
+  RepostLensContentGenerator.generateFinalContentBatch();
 }
