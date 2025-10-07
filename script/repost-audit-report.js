@@ -445,15 +445,60 @@ function prepareDocSections_({pageUrl,searchRow,outline,analyzeData,contextResul
     }
   }
 
+  const keywordSummaryTable=buildKeywordSummaryTable_(searchRow, analyzeData);
   const coverageTable=buildCoverageTableData_(analyzeData);
   const adjustmentsTable=buildAdjustmentsTableData_(contextResult);
   const outlineEntries=parseOutlineEntries_(outline);
 
   return {
     overviewItems,
+    keywordSummaryTable,
     coverageTable,
     adjustmentsTable,
     outlineEntries,
+  };
+}
+
+function buildKeywordSummaryTable_(searchRow, analyzeData) {
+  const mainKeywords = [];
+  const relatedKeywords = [];
+
+  const pushUnique = (list, value) => {
+    const text = sanitizeString_(value);
+    if (!text) return;
+    const lower = text.toLowerCase();
+    if (list.some((item) => item.toLowerCase() === lower)) return;
+    list.push(text);
+  };
+
+  if (searchRow && searchRow.best_query) {
+    pushUnique(mainKeywords, searchRow.best_query);
+  }
+
+  const topRank = Array.isArray(analyzeData?.topRankKeywords) ? analyzeData.topRankKeywords : [];
+  topRank.forEach((item) => pushUnique(mainKeywords, item && item.keyword));
+
+  const rankKeywords = Array.isArray(analyzeData?.rankKeywords) ? analyzeData.rankKeywords : [];
+  rankKeywords.forEach((item) => pushUnique(relatedKeywords, item && item.keyword));
+
+  const coverageCovered = analyzeData?.keywordCoverage?.covered || [];
+  coverageCovered.forEach((item) => pushUnique(relatedKeywords, item && item.text));
+
+  const uncovered = analyzeData?.keywordCoverage?.uncovered || [];
+  uncovered.forEach((item) => pushUnique(relatedKeywords, item && item.text));
+
+  const zeroVolume = analyzeData?.zeroSearchVolumeKeywords?.rank || [];
+  zeroVolume.forEach((item) => pushUnique(relatedKeywords, item && item.keyword));
+
+  const mainJoined = mainKeywords.length ? mainKeywords.join(', ') : '—';
+  const relatedJoined = relatedKeywords.length ? relatedKeywords.join(', ') : '—';
+
+  return {
+    title: 'Keyword Summary',
+    rows: [
+      ['頁面主要關鍵字', mainJoined],
+      ['相關關鍵字', relatedJoined],
+    ],
   };
 }
 
@@ -465,11 +510,12 @@ function buildCoverageTableData_(analyzeData){
     formatNumberDisplay_(row.gsc&&row.gsc.clicks),
     formatNumberDisplay_(row.gsc&&row.gsc.impressions),
     formatNumberDisplay_(row.gsc&&row.gsc.avgPosition,1),
+    '',
   ]).filter((row)=>row.some((cell)=>cell&&cell!=='—'));
   if(!rows.length) return null;
   return {
-    title: 'Keyword Coverage — 已覆蓋部分',
-    headers: ['Keyword','Search Volume','Clicks','Impressions','Avg Position'],
+    title: 'Keyword Data Notes',
+    headers: ['Keyword','Search Volume','Clicks','Impressions','Avg Position','Keyword Data Note'],
     rows,
   };
 }
@@ -516,10 +562,11 @@ function parseOutlineEntries_(outline){
 function buildDocPreviewText_(sections){
   const lines=['Page Overview'];
   sections.overviewItems.forEach((item)=>lines.push(`- ${item}`));
-  if(sections.coverageTable){
-    lines.push('',sections.coverageTable.title);
-    lines.push(sections.coverageTable.headers.join(' | '));
-    sections.coverageTable.rows.forEach((row)=>lines.push(row.join(' | ')));
+  if(sections.keywordSummaryTable){
+    lines.push('',sections.keywordSummaryTable.title);
+    sections.keywordSummaryTable.rows.forEach((row)=>{
+      lines.push(`${row[0]}：${row[1]}`);
+    });
   }
   if(sections.adjustmentsTable){
     lines.push('',sections.adjustmentsTable.title);
@@ -533,6 +580,11 @@ function buildDocPreviewText_(sections){
     sections.outlineEntries.forEach((entry)=>{
       lines.push(`H${entry.level} ${entry.text}`);
     });
+  }
+  if(sections.coverageTable){
+    lines.push('',sections.coverageTable.title);
+    lines.push(sections.coverageTable.headers.join(' | '));
+    sections.coverageTable.rows.forEach((row)=>lines.push(row.join(' | ')));
   }
   return lines.join('\n').trim();
 }
@@ -608,21 +660,10 @@ function writeDocSectionsToBody_(body,sections){
   });
   body.appendParagraph('');
 
-  if(sections.coverageTable){
-    body.appendParagraph(sections.coverageTable.title).setHeading(DocumentApp.ParagraphHeading.HEADING2);
-    const tableData=[sections.coverageTable.headers,...sections.coverageTable.rows];
-    const table=body.appendTable(tableData);
-    const headerRow=table.getRow(0);
-    for(let c=0;c<headerRow.getNumCells();c+=1){
-      headerRow.getCell(c).editAsText().setBold(true);
-    }
-    for(let r=1;r<table.getNumRows();r+=1){
-      const row=table.getRow(r);
-      for(let c=0;c<row.getNumCells();c+=1){
-        row.getCell(c).editAsText().setText(sections.coverageTable.rows[r-1][c]);
-      }
-    }
-    table.setBorderWidth(1);
+  if(sections.keywordSummaryTable){
+    body.appendParagraph(sections.keywordSummaryTable.title).setHeading(DocumentApp.ParagraphHeading.HEADING2);
+    const summaryTable=body.appendTable(sections.keywordSummaryTable.rows);
+    summaryTable.setBorderWidth(1);
     body.appendParagraph('');
   }
 
@@ -650,6 +691,24 @@ function writeDocSectionsToBody_(body,sections){
       body.appendParagraph(`H${entry.level} ${entry.text}`)
         .setHeading(DocumentApp.ParagraphHeading.NORMAL);
     });
+  }
+
+  if(sections.coverageTable){
+    body.appendParagraph('');
+    body.appendParagraph(sections.coverageTable.title).setHeading(DocumentApp.ParagraphHeading.HEADING2);
+    const tableData=[sections.coverageTable.headers,...sections.coverageTable.rows];
+    const table=body.appendTable(tableData);
+    const headerRow=table.getRow(0);
+    for(let c=0;c<headerRow.getNumCells();c+=1){
+      headerRow.getCell(c).editAsText().setBold(true);
+    }
+    for(let r=1;r<table.getNumRows();r+=1){
+      const row=table.getRow(r);
+      for(let c=0;c<row.getNumCells();c+=1){
+        row.getCell(c).editAsText().setText(sections.coverageTable.rows[r-1][c]);
+      }
+    }
+    table.setBorderWidth(1);
   }
 }
 function decodeURIComponentSafe_(url){try{return decodeURI(String(url||''));}catch(e){return String(url||'');}}
