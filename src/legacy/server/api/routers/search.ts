@@ -1,5 +1,8 @@
 import { z } from "zod";
+import { env } from "~/env";
 import { createTRPCRouter, publicProcedure } from "~/server/api/trpc";
+
+const GSC_DB_ENDPOINT = env.GSC_DB_ENDPOINT.replace(/\/$/, "");
 
 const searchResultSchema = z.object({
 	page: z.string(),
@@ -238,8 +241,8 @@ ORDER BY potential_traffic DESC NULLS LAST
 LIMIT 100;`;
 
 			try {
-				const response = await fetch(
-					"https://unbiased-remarkably-arachnid.ngrok-free.app/api/query",
+			const response = await fetch(
+				`${GSC_DB_ENDPOINT}/api/query`,
 					{
 						method: "POST",
 						headers: {
@@ -473,8 +476,8 @@ ORDER BY potential_traffic DESC NULLS LAST
 LIMIT 1;`;
 
 			try {
-				const response = await fetch(
-					"https://unbiased-remarkably-arachnid.ngrok-free.app/api/query",
+			const response = await fetch(
+				`${GSC_DB_ENDPOINT}/api/query`,
 					{
 						method: "POST",
 						headers: {

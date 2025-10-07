@@ -3,7 +3,7 @@ Utility to fetch search insights for top-3 keywords (by search volume)
 from the upstream search endpoint and compute traffic-oriented signals.
 
 Endpoint example:
-GET https://unbiased-remarkably-arachnid.ngrok-free.app/search?query={q}
+GET {GSC_DB_ENDPOINT}/search?query={q}
 
 Response example shape:
 {
@@ -16,6 +16,8 @@ Response example shape:
   merged_results?: any[]
 }
 */
+
+import { env } from "~/env";
 
 export interface KeywordItemLike {
   text: string;
@@ -106,7 +108,8 @@ export interface SearchTrafficInsights {
   };
 }
 
-const ENDPOINT = "https://unbiased-remarkably-arachnid.ngrok-free.app/search?query=";
+const GSC_DB_BASE = env.GSC_DB_ENDPOINT.replace(/\/$/, "");
+const ENDPOINT = `${GSC_DB_BASE}/search?query=`;
 
 function toNumberOrNull(v: unknown): number | null {
   if (typeof v === "number" && isFinite(v)) return v;

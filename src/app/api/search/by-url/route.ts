@@ -1,4 +1,7 @@
 import { NextResponse } from "next/server";
+import { env } from "~/env";
+
+const GSC_DB_ENDPOINT = env.GSC_DB_ENDPOINT.replace(/\/$/, "");
 
 // --- Helper function to get default dates ---
 function getDefaultDates() {
@@ -64,7 +67,7 @@ export async function POST(req: Request) {
       // CHANGED: Pass startDate and periodDays to the LIKE query builder
       const sqlLike = buildSqlForPageLike(site, likePrefix, startDate, periodDays);
       const resp2 = await fetch(
-        "https://unbiased-remarkably-arachnid.ngrok-free.app/api/query",
+        `${GSC_DB_ENDPOINT}/api/query`,
         {
           method: "POST",
           headers: {
@@ -480,7 +483,7 @@ async function queryVariants(site: string, variants: string[], startDate: string
   for (const p of variants) {
     const sql = buildSqlForPage(site, p, startDate, periodDays);
     const response = await fetch(
-      "https://unbiased-remarkably-arachnid.ngrok-free.app/api/query",
+      `${GSC_DB_ENDPOINT}/api/query`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "true" },

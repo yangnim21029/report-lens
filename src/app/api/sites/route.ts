@@ -1,8 +1,11 @@
 import { NextResponse } from "next/server";
+import { env } from "~/env";
+
+const GSC_DB_ENDPOINT = env.GSC_DB_ENDPOINT.replace(/\/$/, "");
 
 export async function GET() {
   try {
-    const upstream = "https://unbiased-remarkably-arachnid.ngrok-free.app/api/sites";
+    const upstream = `${GSC_DB_ENDPOINT}/api/sites`;
     const resp = await fetch(upstream, {
       headers: { "ngrok-skip-browser-warning": "true" },
       // Disable cache to always reflect the latest
@@ -32,4 +35,3 @@ export async function GET() {
     );
   }
 }
-

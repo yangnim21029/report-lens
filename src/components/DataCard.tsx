@@ -118,6 +118,20 @@ export const DataCard = memo(function DataCard({
   const [outlineError, setOutlineError] = useState<string | null>(null);
   const outlinePromiseRef = useRef<Promise<string> | null>(null);
   const [isGeneratingEmail, setIsGeneratingEmail] = useState(false);
+  const descriptionPromiseRef = useRef<Promise<{ content: string; paragraphs: string[] } | null>>(null);
+  const [descriptionResult, setDescriptionResult] = useState<{ content: string; paragraphs: string[] } | null>(null);
+  const [descriptionError, setDescriptionError] = useState<string | null>(null);
+  const [isGeneratingDescription, setIsGeneratingDescription] = useState(false);
+  const [chatContent, setChatContent] = useState<string | null>(null);
+  const [chatError, setChatError] = useState<string | null>(null);
+  const [isGeneratingChat, setIsGeneratingChat] = useState(false);
+  const [isContextVisible, setIsContextVisible] = useState(false);
+  const [isOutlineVisible, setIsOutlineVisible] = useState(false);
+  const [isChatVisible, setIsChatVisible] = useState(false);
+  const [isRequestingOutline, setIsRequestingOutline] = useState(false);
+  const [contextCopied, setContextCopied] = useState(false);
+  const [outlineCopied, setOutlineCopied] = useState(false);
+  const [chatCopied, setChatCopied] = useState(false);
   const [svMap, setSvMap] = useState<Record<string, number | null>>({});
   const [isFetchingSV, setIsFetchingSV] = useState(false);
   const [svError, setSvError] = useState<string | null>(null);
@@ -151,6 +165,20 @@ export const DataCard = memo(function DataCard({
       setOutline(null);
       setOutlineError(null);
       outlinePromiseRef.current = null;
+      descriptionPromiseRef.current = null;
+      setDescriptionResult(null);
+      setDescriptionError(null);
+      setIsGeneratingDescription(false);
+      setChatContent(null);
+      setChatError(null);
+      setIsGeneratingChat(false);
+      setIsContextVisible(false);
+      setIsOutlineVisible(false);
+      setIsChatVisible(false);
+      setIsRequestingOutline(false);
+      setContextCopied(false);
+      setOutlineCopied(false);
+      setChatCopied(false);
       try {
         const res = await fetch("/api/optimize/analyze", {
           method: "POST",
@@ -381,6 +409,180 @@ export const DataCard = memo(function DataCard({
     outlinePromiseRef.current = promise;
     return promise;
   }, [analysis, outline]);
+
+  const ensureDescription = useCallback(async () => {
+    if (!analysis || !analysis.analysis) {
+      throw new Error("尚未產生分析結果，請先執行分析。");
+    }
+    if (descriptionResult) return descriptionResult;
+    if (descriptionPromiseRef.current) return descriptionPromiseRef.current;
+
+    setIsGeneratingDescription(true);
+    setDescriptionError(null);
+
+    const promise = (async () => {
+      try {
+        const outlineText = await ensureOutline();
+        if (!outlineText) {
+          throw new Error("尚未取得大綱內容，請先生成大綱。");
+        }
+        const res = await fetch("/api/write/description", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            analysisText: analysis.analysis,
+            outlineText,
+          }),
+        });
+        const json = await res.json().catch(() => null);
+        if (!res.ok || !json?.success) {
+          throw new Error(json?.error || `描述生成失敗：${res.status}`);
+        }
+        const content =
+          typeof json.description === "string" && json.description.trim()
+            ? json.description.trim()
+            : typeof json.content === "string" && json.content.trim()
+            ? json.content.trim()
+            : "";
+        const paragraphs = Array.isArray(json.paragraphs)
+          ? json.paragraphs
+              .map((item: unknown) => (typeof item === "string" ? item.trim() : ""))
+              .filter((item: string) => item.length > 0)
+          : [];
+        const payload = { content, paragraphs } as { content: string; paragraphs: string[] };
+        setDescriptionResult(payload);
+        return payload;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        setDescriptionError(message);
+        setDescriptionResult(null);
+        throw err;
+      } finally {
+        setIsGeneratingDescription(false);
+        descriptionPromiseRef.current = null;
+      }
+    })();
+
+    descriptionPromiseRef.current = promise;
+    return promise;
+  }, [analysis, descriptionResult, ensureOutline]);
+
+  const handleGenerateContextVector = useCallback(async () => {
+    try {
+      await ensureContextVector();
+    } finally {
+      setIsContextVisible(true);
+    }
+  }, [ensureContextVector]);
+
+  const handleGenerateOutline = useCallback(async () => {
+    setIsRequestingOutline(true);
+    try {
+      await ensureOutline();
+      setIsOutlineVisible(true);
+    } catch (err) {
+      setIsOutlineVisible(true);
+      if (err) {
+        try {
+          console.debug("[DataCard] outline generation failed", err);
+        } catch {}
+      }
+    } finally {
+      setIsRequestingOutline(false);
+    }
+  }, [ensureOutline]);
+
+  const handleGenerateChatContent = useCallback(async () => {
+    if (!analysis || !analysis.analysis) {
+      setChatError("尚未產生分析結果，請先點 ANALYZE。");
+      setIsChatVisible(true);
+      return;
+    }
+
+    setIsGeneratingChat(true);
+    setChatError(null);
+
+    try {
+      const description = await ensureDescription();
+      const paragraphs = description?.paragraphs?.length
+        ? description.paragraphs
+        : description?.content
+        ? [description.content]
+        : [];
+      if (!paragraphs.length) {
+        throw new Error("沒有可用的段落可生成對話內容。");
+      }
+
+      const response = await fetch("/api/write/chat", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ paragraphs }),
+      });
+      const json = await response.json().catch(() => null);
+      if (!response.ok || !json?.success) {
+        throw new Error(json?.error || `對話內容生成失敗：${response.status}`);
+      }
+      const results = Array.isArray(json.results) ? json.results : [];
+      const successItems = results
+        .filter((item: any) => item && item.success && typeof item.content === "string")
+        .sort((a: any, b: any) => {
+          const ai = typeof a.index === "number" ? a.index : 0;
+          const bi = typeof b.index === "number" ? b.index : 0;
+          return ai - bi;
+        })
+        .map((item: any) => String(item.content).trim())
+        .filter((text: string) => text.length > 0);
+      if (!successItems.length) {
+        throw new Error("對話內容生成失敗，缺少有效的段落。");
+      }
+      const combined = successItems.join("\n\n");
+      setChatContent(combined);
+      setIsChatVisible(true);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setChatError(message);
+      setChatContent(null);
+      setIsChatVisible(true);
+    } finally {
+      setIsGeneratingChat(false);
+    }
+  }, [analysis, ensureDescription]);
+
+  const handleCopyContextVector = useCallback(async () => {
+    if (!contextVector) return;
+    try {
+      await navigator.clipboard.writeText(contextVector);
+      setContextCopied(true);
+      setTimeout(() => setContextCopied(false), 1800);
+    } catch (err) {
+      console.error("[DataCard] copy context vector failed", err);
+      alert("複製內容失敗，請手動複製。");
+    }
+  }, [contextVector]);
+
+  const handleCopyOutline = useCallback(async () => {
+    if (!outline) return;
+    try {
+      await navigator.clipboard.writeText(outline);
+      setOutlineCopied(true);
+      setTimeout(() => setOutlineCopied(false), 1800);
+    } catch (err) {
+      console.error("[DataCard] copy outline failed", err);
+      alert("複製內容失敗，請手動複製。");
+    }
+  }, [outline]);
+
+  const handleCopyChatContent = useCallback(async () => {
+    if (!chatContent) return;
+    try {
+      await navigator.clipboard.writeText(chatContent);
+      setChatCopied(true);
+      setTimeout(() => setChatCopied(false), 1800);
+    } catch (err) {
+      console.error("[DataCard] copy chat failed", err);
+      alert("複製內容失敗，請手動複製。");
+    }
+  }, [chatContent]);
 
   const handleCopyToClipboard = useCallback(
     async (format: "markdown" | "csv" | "email", _isStandardFallback = false) => {
@@ -871,6 +1073,155 @@ export const DataCard = memo(function DataCard({
               </details>
             )}
           </div>
+        )}
+
+        {analysis && (
+          <section className="mt-[var(--space-sm)] space-y-[var(--space-sm)] border border-[var(--gray-6)] bg-[var(--paper)] p-[var(--space-md)]">
+            <div className="flex flex-col gap-[var(--space-xs)]">
+              <h3 className="font-black text-[var(--ink)] text-[var(--text-sm)] uppercase tracking-wide">
+                AI 內容助手
+              </h3>
+              <p className="text-[var(--gray-5)] text-[var(--text-xxs)]">
+                直接呼叫建議、大綱與對話內容 API，輸出自然語氣的寫作素材。
+              </p>
+            </div>
+
+            <div className="space-y-[var(--space-sm)]">
+              <div className="rounded-sm border border-[var(--gray-7)] bg-[var(--gray-9)] p-[var(--space-md)]">
+                <div className="flex flex-wrap items-center justify-between gap-[var(--space-sm)]">
+                  <div className="flex flex-col gap-[2px]">
+                    <span className="font-bold text-[var(--ink)] text-[var(--text-sm)]">
+                      段落調整建議
+                    </span>
+                    <span className="text-[var(--gray-5)] text-[var(--text-xxs)]">
+                      使用 Context Vector API 產生自然語氣的新增段落。
+                    </span>
+                  </div>
+                  <button
+                    onClick={handleGenerateContextVector}
+                    disabled={isGeneratingContext}
+                    className="border border-[var(--accent-primary)] bg-transparent px-[var(--space-md)] py-[var(--space-xs)] text-[var(--accent-primary)] text-[var(--text-xxs)] uppercase tracking-wide transition-colors hover:bg-[var(--accent-primary)] hover:text-[var(--paper)] disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {isGeneratingContext ? "生成中..." : contextVector ? "重新生成" : "生成建議"}
+                  </button>
+                </div>
+                {contextVectorError && (
+                  <p className="mt-[var(--space-xs)] text-[var(--accent-primary)] text-[var(--text-xxs)]">
+                    {contextVectorError}
+                  </p>
+                )}
+                {isContextVisible && contextVector && (
+                  <>
+                    <div className="mt-[var(--space-sm)] flex flex-wrap items-center justify-between gap-[var(--space-xs)]">
+                      <span className="text-[var(--gray-5)] text-[var(--text-xxs)]">
+                        複製後即可貼到簡報或 email
+                      </span>
+                      <button
+                        onClick={handleCopyContextVector}
+                        className="border border-[var(--gray-5)] bg-transparent px-[var(--space-sm)] py-[var(--space-xs)] text-[var(--gray-4)] text-[var(--text-xxs)] uppercase tracking-wide transition-colors hover:border-[var(--gray-4)] hover:bg-[var(--gray-8)]"
+                      >
+                        {contextCopied ? "已複製" : "複製建議"}
+                      </button>
+                    </div>
+                    <pre className="mt-[var(--space-sm)] max-h-60 overflow-y-auto whitespace-pre-wrap break-words text-[var(--gray-2)] text-[var(--text-xxs)] leading-relaxed">
+                      {contextVector}
+                    </pre>
+                  </>
+                )}
+              </div>
+
+              <div className="rounded-sm border border-[var(--gray-7)] bg-[var(--gray-9)] p-[var(--space-md)]">
+                <div className="flex flex-wrap items-center justify-between gap-[var(--space-sm)]">
+                  <div className="flex flex-col gap-[2px]">
+                    <span className="font-bold text-[var(--ink)] text-[var(--text-sm)]">
+                      文章大綱
+                    </span>
+                    <span className="text-[var(--gray-5)] text-[var(--text-xxs)]">
+                      萃取分析結果為執行用大綱，語氣保持生活化。
+                    </span>
+                  </div>
+                  <button
+                    onClick={handleGenerateOutline}
+                    disabled={isRequestingOutline}
+                    className="border border-[var(--accent-primary)] bg-transparent px-[var(--space-md)] py-[var(--space-xs)] text-[var(--accent-primary)] text-[var(--text-xxs)] uppercase tracking-wide transition-colors hover:bg-[var(--accent-primary)] hover:text-[var(--paper)] disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {isRequestingOutline ? "生成中..." : outline ? "重新生成" : "生成大綱"}
+                  </button>
+                </div>
+                {outlineError && (
+                  <p className="mt-[var(--space-xs)] text-[var(--accent-primary)] text-[var(--text-xxs)]">
+                    {outlineError}
+                  </p>
+                )}
+                {isOutlineVisible && outline && (
+                  <>
+                    <div className="mt-[var(--space-sm)] flex flex-wrap items-center justify-between gap-[var(--space-xs)]">
+                      <span className="text-[var(--gray-5)] text-[var(--text-xxs)]">
+                        直接貼到規劃文件或 Notion
+                      </span>
+                      <button
+                        onClick={handleCopyOutline}
+                        className="border border-[var(--gray-5)] bg-transparent px-[var(--space-sm)] py-[var(--space-xs)] text-[var(--gray-4)] text-[var(--text-xxs)] uppercase tracking-wide transition-colors hover:border-[var(--gray-4)] hover:bg-[var(--gray-8)]"
+                      >
+                        {outlineCopied ? "已複製" : "複製大綱"}
+                      </button>
+                    </div>
+                    <pre className="mt-[var(--space-sm)] max-h-60 overflow-y-auto whitespace-pre-wrap break-words text-[var(--gray-2)] text-[var(--text-xxs)] leading-relaxed">
+                      {outline}
+                    </pre>
+                  </>
+                )}
+              </div>
+
+              <div className="rounded-sm border border-[var(--gray-7)] bg-[var(--gray-9)] p-[var(--space-md)]">
+                <div className="flex flex-wrap items-center justify-between gap-[var(--space-sm)]">
+                  <div className="flex flex-col gap-[2px]">
+                    <span className="font-bold text-[var(--ink)] text-[var(--text-sm)]">
+                      對話式內容
+                    </span>
+                    <span className="text-[var(--gray-5)] text-[var(--text-xxs)]">
+                      以台灣語氣的雙人對話呈現重點，方便社群貼文直接引用。
+                    </span>
+                  </div>
+                  <button
+                    onClick={handleGenerateChatContent}
+                    disabled={isGeneratingChat || isGeneratingDescription}
+                    className="border border-[var(--accent-primary)] bg-transparent px-[var(--space-md)] py-[var(--space-xs)] text-[var(--accent-primary)] text-[var(--text-xxs)] uppercase tracking-wide transition-colors hover:bg-[var(--accent-primary)] hover:text-[var(--paper)] disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {isGeneratingChat || isGeneratingDescription ? "生成中..." : chatContent ? "重新生成" : "生成對話"}
+                  </button>
+                </div>
+                {(descriptionError || chatError) && (
+                  <p className="mt-[var(--space-xs)] text-[var(--accent-primary)] text-[var(--text-xxs)]">
+                    {chatError || descriptionError}
+                  </p>
+                )}
+                {(isGeneratingDescription || isGeneratingChat) && !chatError && (
+                  <p className="mt-[var(--space-xs)] text-[var(--gray-4)] text-[var(--text-xxs)]">
+                    正在整理段落與對話，請稍候...
+                  </p>
+                )}
+                {isChatVisible && chatContent && (
+                  <>
+                    <div className="mt-[var(--space-sm)] flex flex-wrap items-center justify-between gap-[var(--space-xs)]">
+                      <span className="text-[var(--gray-5)] text-[var(--text-xxs)]">
+                        複製後可直接貼進社群貼文或腳本
+                      </span>
+                      <button
+                        onClick={handleCopyChatContent}
+                        className="border border-[var(--gray-5)] bg-transparent px-[var(--space-sm)] py-[var(--space-xs)] text-[var(--gray-4)] text-[var(--text-xxs)] uppercase tracking-wide transition-colors hover:border-[var(--gray-4)] hover:bg-[var(--gray-8)]"
+                      >
+                        {chatCopied ? "已複製" : "複製對話"}
+                      </button>
+                    </div>
+                    <pre className="mt-[var(--space-sm)] max-h-60 overflow-y-auto whitespace-pre-wrap break-words text-[var(--gray-2)] text-[var(--text-xxs)] leading-relaxed">
+                      {chatContent}
+                    </pre>
+                  </>
+                )}
+              </div>
+            </div>
+          </section>
         )}
 
         {/* Keywords - Hidden by default */}

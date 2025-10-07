@@ -19,6 +19,7 @@ export const env = createEnv({
 			.default("development"),
 		OPENAI_API_KEY: z.string(),
 		GOOGLE_CHAT_WEBHOOK_URL: z.string().url().optional(),
+		GSC_DB_ENDPOINT: z.string().url(),
 	},
 
 	/**
@@ -42,6 +43,7 @@ export const env = createEnv({
 		NODE_ENV: process.env.NODE_ENV,
 		OPENAI_API_KEY: process.env.OPENAI_API_KEY,
 		GOOGLE_CHAT_WEBHOOK_URL: process.env.GOOGLE_CHAT_WEBHOOK_URL,
+		GSC_DB_ENDPOINT: process.env.GSC_DB_ENDPOINT,
 	},
 	/**
 	 * Run `build` or `dev` with `SKIP_ENV_VALIDATION` to skip env validation. This is especially

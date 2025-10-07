@@ -1,12 +1,14 @@
 import { unstable_cache } from "next/cache";
 import { NextResponse } from "next/server";
+import { env } from "~/env";
 
 const DAY_IN_SECONDS = 60 * 60 * 24;
+const GSC_DB_ENDPOINT = env.GSC_DB_ENDPOINT.replace(/\/$/, "");
 
 const fetchSearchList = unstable_cache(
   async (site: string) => {
     const sql = buildSqlForList(site);
-    const response = await fetch("https://unbiased-remarkably-arachnid.ngrok-free.app/api/query", {
+    const response = await fetch(`${GSC_DB_ENDPOINT}/api/query`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
