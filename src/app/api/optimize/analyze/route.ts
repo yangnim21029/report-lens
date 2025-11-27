@@ -446,7 +446,7 @@ ${coverageBlock}${contentExplorerBlock}`;
     // Step 4: Call Vertex (Gemini)
     const model = getVertexTextModel();
     const resp = await model.generateContent({
-      system: `## 你的角色
+      systemInstruction: `## 你的角色
 你是 SEO 語義劫持專家，專責分析搜尋意圖與規劃詞組等價策略。
 分析指定文章的 SEO 語意劫持機會，並基於 Rank 4-10 的關鍵字數據，設計使用 Best Query 進行語意等價策略。
 - Analyze the SEO intent capture potential for this article and devise strategies to leverage Rank 4-10 keyword data for semantically equivalent query planning.

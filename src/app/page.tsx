@@ -1,381 +1,433 @@
 "use client";
 
-import Link from "next/link";
-import { memo, useCallback, useEffect, useRef, useState, useMemo } from "react";
-import { AnalysisModal } from "~/components/AnalysisModal";
-import { DataCard } from "~/components/DataCard";
-import { RegionFilter } from "~/components/RegionFilter";
-import {
-	extractAnalysisData,
-	formatAsCSV,
-	formatAsEmail,
-	formatAsMarkdown,
-} from "~/utils/extract-format-html";
+import { useEffect, useMemo, useState } from "react";
 
-export default function HomePage() {
-	const [site, setSite] = useState("sc-domain:holidaysmart.io");
-	const [pageUrl, setPageUrl] = useState("");
-	const [startDate, setStartDate] = useState<string>(() => {
-		const end = new Date();
-		const start = new Date(end);
-		start.setDate(end.getDate() - 14);
-		return start.toISOString().split("T")[0]!;
-	});
-	const [periodDays, setPeriodDays] = useState<number>(14);
-	const [sites, setSites] = useState<string[]>([]);
-	const [sitesLoading, setSitesLoading] = useState(false);
-	const [sitesError, setSitesError] = useState<string | null>(null);
+type Endpoint = {
+  title: string;
+  path: string;
+  description: string;
+  sample: string;
+};
 
-	useEffect(() => {
-		let cancelled = false;
-		const load = async () => {
-			setSitesLoading(true);
-			setSitesError(null);
-			try {
-				const res = await fetch("/api/sites", { cache: "no-store" });
-				if (!res.ok) throw new Error(`Sites fetch failed: ${res.status}`);
-				const json = await res.json();
-				let list: string[] = [];
-				if (Array.isArray(json)) {
-					list = json
-						.map((x) => (typeof x === "string" ? x : (x?.site || x?.id || x?.name)))
-						.filter((v: any): v is string => typeof v === "string");
-				}
-				if (!cancelled) setSites(list);
-			} catch (e: any) {
-				if (!cancelled) setSitesError(e?.message || String(e));
-			} finally {
-				if (!cancelled) setSitesLoading(false);
-			}
-		};
-		load();
-		return () => { cancelled = true; };
-	}, []);
-	const [expandedRow, setExpandedRow] = useState<number | null>(null);
-	const [isMounted, setIsMounted] = useState(false);
-	const [hasOpenModal, setHasOpenModal] = useState(false);
-	const [selectedRegion, setSelectedRegion] = useState<string>("all");
-	const scrollIndicatorRef = useRef<HTMLDivElement>(null);
-	const [data, setData] = useState<any[] | null>(null);
-	const [isLoading, setIsLoading] = useState(false);
-	const [error, setError] = useState<Error | null>(null);
+const DEFAULT_SITE = "sc-domain:holidaysmart.io";
+const DEFAULT_PAGE =
+  "https://holidaysmart.io/hk/article/458268/%E5%B1%AF%E9%96%80";
+const DEFAULT_BASE_URL = "http://localhost:3000";
 
-	const refetch = useCallback(async () => {
-		// Guard: require either a domain or a page URL
-		if (!pageUrl.trim() && !site.trim()) {
-			setError(new Error("Please enter a domain or a page URL."));
-			setData([]);
-			return;
-		}
-		setIsLoading(true);
-		setError(null);
-		try {
-			// If pageUrl is provided, query the by-url endpoint for that specific page
-			const endpoint = pageUrl.trim() ? "/api/search/by-url" : "/api/search/list";
-			const payload = pageUrl.trim()
-				? { site, page: pageUrl.trim(), startDate, periodDays }
-				: { site };
-			const res = await fetch(endpoint, {
-				method: "POST",
-				headers: { "content-type": "application/json" },
-				body: JSON.stringify(payload),
-			});
-			if (!res.ok) throw new Error(`Search failed: ${res.status}`);
-			const json = await res.json();
-			setData(Array.isArray(json) ? json : []);
-		} catch (e: any) {
-			setError(e instanceof Error ? e : new Error(String(e)));
-			setData([]);
-		} finally {
-			setIsLoading(false);
-		}
-	}, [site, pageUrl, startDate, periodDays]);
-
-	// Stable callback for modal state changes
-	const handleModalChange = useCallback((isOpen: boolean) => {
-		setHasOpenModal(isOpen);
-	}, []);
-
-	// Track scroll progress - only on client
-	useEffect(() => {
-		setIsMounted(true);
-
-		const handleScroll = () => {
-			// Don't update scroll progress if any modal is open
-			if (hasOpenModal) return;
-
-			const totalHeight =
-				document.documentElement.scrollHeight - window.innerHeight;
-			const progress = (window.scrollY / totalHeight) * 100;
-
-			// Directly update CSS variable instead of React state
-			if (scrollIndicatorRef.current) {
-				scrollIndicatorRef.current.style.setProperty(
-					"--scroll-progress",
-					`${Math.min(100, Math.max(0, progress))}%`,
-				);
-			}
-		};
-
-		// Only add listener if modal is not open
-		if (!hasOpenModal) {
-			window.addEventListener("scroll", handleScroll, { passive: true });
-		}
-
-		return () => window.removeEventListener("scroll", handleScroll);
-	}, [hasOpenModal]);
-
-	// Filter data based on selected region
-	const filteredData = useMemo(() => {
-		if (!data || selectedRegion === "all") return data || [];
-		return data.filter(row => row.page.includes(`/${selectedRegion}/`));
-	}, [data, selectedRegion]);
-
-	const handleSearch = () => {
-		refetch();
-		setExpandedRow(null);
-		setSelectedRegion("all"); // Reset filter when searching
-	};
-
-	const handleKeyPress = (e: React.KeyboardEvent) => {
-		if (e.key === "Enter") {
-			handleSearch();
-		}
-	};
-
-	return (
-		<>
-			{/* Scroll Progress Indicator - Only render on client */}
-			{isMounted && (
-				<div
-					ref={scrollIndicatorRef}
-					className="scroll-indicator"
-					style={{ "--scroll-progress": "0%" } as React.CSSProperties}
-				/>
-			)}
-
-			<main className="min-h-screen">
-				{/* Navigation */}
-				<nav className="container mx-auto px-[var(--space-lg)] py-[var(--space-md)]">
-					<div className="flex justify-between items-center">
-						<Link href="/" className="font-black text-[var(--ink)] text-[var(--text-lg)]">
-							REPOSTLENS
-						</Link>
-						<div className="flex gap-[var(--space-md)]">
-							<Link 
-								href="/custom" 
-								className="text-[var(--gray-4)] hover:text-[var(--accent-primary)] transition-colors font-bold text-[var(--text-sm)] uppercase"
-							>
-								CSV Upload
-							</Link>
-						</div>
-					</div>
-				</nav>
-
-				{/* Hero Section - Typography as Interface */}
-				<section className="noise relative flex min-h-[70vh] items-center justify-center overflow-hidden">
-					{/* Animated Background Elements */}
-					<div className="absolute inset-0 opacity-5">
-						<div className="absolute top-1/4 left-1/4 animate-float select-none font-black text-[20rem] text-[var(--ink)]">
-							SEO
-						</div>
-						<div className="absolute right-1/4 bottom-1/4 animate-pulse-slow select-none font-black text-[15rem] text-[var(--ink)]">
-							DATA
-						</div>
-					</div>
-
-					{/* Main Content */}
-					<div className="container relative z-10 mx-auto px-[var(--space-lg)] text-center">
-						<h1 className="mb-[var(--space-xl)] text-editorial">
-							<span className="mb-2 block font-normal text-[var(--gray-4)] text-[var(--text-3xl)]">
-								REPOST
-							</span>
-							<span className="block text-[var(--accent-primary)] text-[var(--text-display)]">
-								LENS
-							</span>
-						</h1>
-
-						<p className="mx-auto mb-[var(--space-xl)] max-w-2xl text-balance text-[var(--gray-3)] text-[var(--text-lg)]">
-							Semantic Hijacking for Search Dominance
-						</p>
-
-						{/* Search Interface */}
-						<div className="relative mx-auto max-w-3xl">
-				<div className="flex flex-col gap-[var(--space-md)] sm:flex-row">
-					{!pageUrl.trim() && (
-						<div className="flex-1">
-							{sitesLoading ? (
-								<div className="text-[var(--gray-5)] text-[var(--text-sm)]">Loading sites...</div>
-							) : sites && sites.length > 0 ? (
-								<select
-									value={site}
-									onChange={(e) => setSite(e.target.value)}
-									className="w-full border-[var(--gray-6)] border-b-3 bg-transparent px-[var(--space-lg)] py-[var(--space-md)] font-bold text-[var(--ink)] text-[var(--text-xl)] focus:border-[var(--accent-primary)] focus:outline-none"
-								>
-									{sites.map((s, i) => (
-										<option key={i} value={s} className="text-[var(--ink)]">
-											{s}
-										</option>
-									))}
-								</select>
-							) : (
-								<input
-									type="text"
-									value={site}
-									onChange={(e) => setSite(e.target.value)}
-									onKeyPress={handleKeyPress}
-									className="w-full border-[var(--gray-6)] border-b-3 bg-transparent px-[var(--space-lg)] py-[var(--space-md)] font-bold text-[var(--ink)] text-[var(--text-xl)] placeholder:text-[var(--gray-5)] focus:border-[var(--accent-primary)] focus:outline-none"
-									placeholder="Domain (e.g., sc-domain:example.com)"
-								/>
-							)}
-							{sitesError && (
-								<div className="mt-[var(--space-xs)] text-[var(--text-xs)] text-red-500">{sitesError}</div>
-							)}
-						</div>
-					)}
-								<input
-									type="text"
-									value={pageUrl}
-									onChange={(e) => setPageUrl(e.target.value)}
-									onKeyPress={handleKeyPress}
-									className="flex-1 border-[var(--gray-6)] border-b-3 bg-transparent px-[var(--space-lg)] py-[var(--space-md)] font-bold text-[var(--ink)] text-[var(--text-xl)] transition-all duration-[var(--duration-normal)] placeholder:text-[var(--gray-5)] focus:border-[var(--accent-primary)] focus:outline-none"
-									placeholder="Exact page URL (optional)"
-								/>
-								{pageUrl.trim() && (
-									<div className="flex flex-col gap-[var(--space-md)] sm:flex-row sm:items-end">
-										<div className="flex items-center gap-[var(--space-sm)]">
-											<label className="text-[var(--gray-5)] text-[var(--text-xs)]">Start Date</label>
-											<input
-												type="date"
-												value={startDate}
-												onChange={(e) => setStartDate(e.target.value)}
-												className="border-[var(--gray-6)] border-b-3 bg-transparent px-[var(--space-sm)] py-[var(--space-xs)] font-bold text-[var(--ink)] text-[var(--text-sm)] focus:border-[var(--accent-primary)] focus:outline-none"
-											/>
-										</div>
-										<div className="flex items-center gap-[var(--space-sm)]">
-											<label className="text-[var(--gray-5)] text-[var(--text-xs)]">Days</label>
-											<select
-												value={periodDays}
-												onChange={(e) => setPeriodDays(Number(e.target.value))}
-												className="border-[var(--gray-6)] border-b-3 bg-transparent px-[var(--space-sm)] py-[var(--space-xs)] font-bold text-[var(--ink)] text-[var(--text-sm)] focus:border-[var(--accent-primary)] focus:outline-none"
-											>
-												<option value={7}>7</option>
-												<option value={14}>14</option>
-												<option value={28}>28</option>
-											</select>
-										</div>
-									</div>
-								)}
-								<button
-									onClick={handleSearch}
-									disabled={isLoading}
-									className="btn-brutal min-w-[150px] disabled:cursor-not-allowed disabled:opacity-50"
-								>
-									{isLoading ? (
-										<span className="inline-block animate-spin">⟳</span>
-									) : (
-										"ANALYZE"
-									)}
-								</button>
-							</div>
-						</div>
-					</div>
-				</section>
-
-				{/* Error State */}
-				{error && (
-					<div className="container mx-auto px-[var(--space-lg)] py-[var(--space-md)]">
-						<div className="paper-effect border-[var(--accent-primary)] border-l-4 p-[var(--space-lg)]">
-							<p className="font-bold text-[var(--accent-primary)]">
-								Analysis Error
-							</p>
-							<p className="mt-2 text-[var(--gray-3)]">{error.message}</p>
-						</div>
-					</div>
-				)}
-
-				{/* Results Section */}
-				{data && data.length > 0 ? (
-					<section className="container mx-auto px-[var(--space-lg)] py-[var(--space-xl)]">
-						<div className="mb-[var(--space-lg)]">
-							<h2 className="mb-[var(--space-sm)] font-black text-[var(--ink)] text-[var(--text-2xl)]">
-								SEMANTIC OPPORTUNITIES
-							</h2>
-						<p className="text-[var(--gray-4)]">
-							{pageUrl.trim()
-								? `${filteredData.length} result for specific page`
-								: `${filteredData.length} of ${data.length} pages with hijacking potential`}
-						</p>
-						</div>
-
-						{/* Region Filter - hide when querying exact page */}
-						{!pageUrl.trim() && (
-							<RegionFilter 
-								data={data}
-								selectedRegion={selectedRegion}
-								onRegionChange={setSelectedRegion}
-							/>
-						)}
-
-						{/* Data Grid - Cards Layout */}
-						<div className="grid-editorial">
-							{filteredData.map((row, index) => (
-								<DataCard
-									key={index}
-									data={row}
-									site={site}
-									startDate={startDate}
-									periodDays={periodDays}
-									ctrBenchmark={39.8}
-									onModalChange={handleModalChange}
-								/>
-							))}
-						</div>
-					</section>
-				) : data && data.length === 0 ? (
-					<div className="container mx-auto px-[var(--space-lg)] py-[var(--space-xl)]">
-						<div className="text-center">
-							<p className="text-[var(--gray-4)] text-[var(--text-xl)]">
-								No data found. Adjust your search criteria.
-							</p>
-						</div>
-					</div>
-				) : null}
-			</main>
-		</>
-	);
+function buildEndpoints(baseUrl: string): Endpoint[] {
+  const origin = baseUrl.replace(/\/$/, "");
+  return [
+    {
+      title: "站點清單",
+      path: "GET /api/sites",
+      description: "向上游 GSC DB 取得可用的 site token 陣列（無參數）。",
+      sample: `curl -sS '${origin}/api/sites' | jq`,
+    },
+    {
+      title: "站內列表查詢",
+      path: "POST /api/search/list",
+      description: "輸入 site，回傳該站過去 30 天（含 MoM）聚合的頁面表現。",
+      sample: `curl -sS '${origin}/api/search/list' \\\n  -H 'content-type: application/json' \\\n  --data-raw '{\"site\":\"sc-domain:holidaysmart.io\"}' | jq '.[0]'`,
+    },
+    {
+      title: "單頁查詢",
+      path: "POST /api/search/by-url",
+      description:
+        "輸入 site + page，支援 startDate (YYYY-MM-DD) 與 periodDays，預設近 14 天。",
+      sample: `curl -sS '${origin}/api/search/by-url' \\\n  -H 'content-type: application/json' \\\n  --data-raw '{\"site\":\"sc-domain:holidaysmart.io\",\"page\":\"https://holidaysmart.io/hk/article/458268/%E5%B1%AF%E9%96%80\",\"startDate\":\"2024-01-01\",\"periodDays\":14}' | jq`,
+    },
+    {
+      title: "語意分析",
+      path: "POST /api/optimize/analyze",
+      description:
+        "輸入 page 及 keyword stats（best_query、rank1~10 等），回傳 sections.quickWins / structuralChanges / rawAnalysis。",
+      sample: `curl -sS '${origin}/api/optimize/analyze' \\\n  -H 'content-type: application/json' \\\n  --data-raw '{\"page\":\"https://example.com/foo\",\"bestQuery\":\"關鍵字\",\"bestQueryClicks\":120,\"bestQueryPosition\":5.2}' | jq '.sections'`,
+    },
+    {
+      title: "Meta 標題提案",
+      path: "POST /api/metatag",
+      description:
+        "輸入 site + page (+ topic/ctrBenchmark/startDate/periodDays)，會先呼叫 by-url 拉資料，再用 OpenAI 產生標題建議與目標關鍵字。",
+      sample: `curl -sS '${origin}/api/metatag' \\\n  -H 'content-type: application/json' \\\n  --data-raw '{\"site\":\"sc-domain:holidaysmart.io\",\"page\":\"https://holidaysmart.io/hk/article/458268/%E5%B1%AF%E9%96%80\",\"topic\":\"主題\"}' | jq '{success, targetKeyword, report}'`,
+    },
+    {
+      title: "Context Vector",
+      path: "POST /api/report/context-vector",
+      description:
+        "輸入分析文字 + pageUrl，輸出 markdown 表格（原文片段 vs 建議調整）。",
+      sample: `curl -sS '${origin}/api/report/context-vector' \\\n  -H 'content-type: application/json' \\\n  --data-raw '{\"analysisText\":\"<analysis text>\",\"pageUrl\":\"https://example.com\"}' | jq`,
+    },
+  ];
 }
 
-// Keywords Display Component
-function KeywordsDisplay({ keywords }: { keywords: string[] }) {
-	const [showAll, setShowAll] = useState(false);
-	const MAX_VISIBLE = 3;
-
-	if (keywords.length === 0) return null;
-
-	const visibleKeywords = showAll ? keywords : keywords.slice(0, MAX_VISIBLE);
-	const hasMore = keywords.length > MAX_VISIBLE;
-
-	return (
-		<div className="flex flex-wrap items-center gap-[var(--space-xs)]">
-			{visibleKeywords.map((keyword, i) => (
-				<span
-					key={i}
-					className="bg-[var(--gray-7)] px-[var(--space-sm)] py-[var(--space-xs)] font-medium text-[var(--gray-3)] text-[var(--text-xs)] uppercase tracking-wider"
-				>
-					{keyword}
-				</span>
-			))}
-			{hasMore && (
-				<button
-					onClick={() => setShowAll(!showAll)}
-					className="font-bold text-[var(--accent-primary)] text-[var(--text-xs)] uppercase hover:underline"
-				>
-					{showAll ? "← Show Less" : `+${keywords.length - MAX_VISIBLE} More →`}
-				</button>
-			)}
-		</div>
-	);
+function getDefaultStartDate() {
+  const end = new Date();
+  const start = new Date(end);
+  start.setDate(end.getDate() - 14);
+  return start.toISOString().split("T")[0]!;
 }
 
-// DataCard is now imported from '~/components/DataCard'
+function pretty(obj: unknown) {
+  if (obj === null || obj === undefined) return "";
+  try {
+    return JSON.stringify(obj, null, 2);
+  } catch {
+    return String(obj);
+  }
+}
+
+export default function ApiDocsPage() {
+  const [baseUrl, setBaseUrl] = useState(DEFAULT_BASE_URL);
+  const [site, setSite] = useState(DEFAULT_SITE);
+  const [pageUrl, setPageUrl] = useState(DEFAULT_PAGE);
+  const [startDate, setStartDate] = useState(getDefaultStartDate);
+  const [periodDays, setPeriodDays] = useState(14);
+  const [endpointStates, setEndpointStates] = useState<
+    Record<
+      string,
+      {
+        loading: boolean;
+        data: unknown;
+        error: string | null;
+      }
+    >
+  >({});
+
+  const [searchResult, setSearchResult] = useState<any[] | null>(null);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
+
+  const [analyzeResult, setAnalyzeResult] = useState<any | null>(null);
+  const [analyzeLoading, setAnalyzeLoading] = useState(false);
+  const [analyzeError, setAnalyzeError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      setBaseUrl(window.location.origin);
+    }
+  }, []);
+
+  const firstRow = useMemo(
+    () => (Array.isArray(searchResult) && searchResult.length ? searchResult[0] : null),
+    [searchResult],
+  );
+
+  const endpoints = useMemo(() => buildEndpoints(baseUrl), [baseUrl]);
+
+  const handleSearch = async () => {
+    setSearchLoading(true);
+    setSearchError(null);
+    setAnalyzeResult(null);
+    setAnalyzeError(null);
+    try {
+      const res = await fetch("/api/search/by-url", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ site, page: pageUrl, startDate, periodDays }),
+      });
+      const json = await res.json().catch(() => null);
+      if (!res.ok) {
+        throw new Error(json?.error || `Search failed: ${res.status}`);
+      }
+      if (!Array.isArray(json)) {
+        throw new Error("Unexpected response shape (expected array).");
+      }
+      setSearchResult(json);
+    } catch (err) {
+      setSearchResult(null);
+      setSearchError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSearchLoading(false);
+    }
+  };
+
+  const handleAnalyze = async () => {
+    if (!firstRow) {
+      setAnalyzeError("請先跑單頁查詢，才能傳遞資料給 /api/optimize/analyze。");
+      return;
+    }
+    setAnalyzeLoading(true);
+    setAnalyzeError(null);
+    try {
+      const payload: Record<string, unknown> = {
+        page: pageUrl,
+        bestQuery: firstRow.best_query,
+        bestQueryClicks: firstRow.best_query_clicks,
+        bestQueryPosition: firstRow.best_query_position,
+      };
+      const res = await fetch("/api/optimize/analyze", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const json = await res.json().catch(() => null);
+      if (!res.ok) {
+        throw new Error(json?.error || `Analyze failed: ${res.status}`);
+      }
+      setAnalyzeResult(json);
+    } catch (err) {
+      setAnalyzeResult(null);
+      setAnalyzeError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setAnalyzeLoading(false);
+    }
+  };
+
+  const runEndpoint = async (ep: Endpoint) => {
+    setEndpointStates((prev) => ({
+      ...prev,
+      [ep.path]: { loading: true, data: prev[ep.path]?.data ?? null, error: null },
+    }));
+
+    try {
+      let res: Response;
+      switch (ep.path) {
+        case "GET /api/sites": {
+          res = await fetch("/api/sites");
+          break;
+        }
+        case "POST /api/search/list": {
+          res = await fetch("/api/search/list", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ site }),
+          });
+          break;
+        }
+        case "POST /api/search/by-url": {
+          res = await fetch("/api/search/by-url", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ site, page: pageUrl, startDate, periodDays }),
+          });
+          break;
+        }
+        case "POST /api/optimize/analyze": {
+          if (!firstRow) {
+            throw new Error("請先跑單頁查詢（by-url），才能帶入 best_query。");
+          }
+          const payload: Record<string, unknown> = {
+            page: pageUrl,
+            bestQuery: firstRow.best_query,
+            bestQueryClicks: firstRow.best_query_clicks,
+            bestQueryPosition: firstRow.best_query_position,
+          };
+          res = await fetch("/api/optimize/analyze", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(payload),
+          });
+          break;
+        }
+        case "POST /api/metatag": {
+          res = await fetch("/api/metatag", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              site,
+              page: pageUrl,
+              topic: "主題",
+              startDate,
+              periodDays,
+            }),
+          });
+          break;
+        }
+        case "POST /api/report/context-vector": {
+          const fallbackAnalysis =
+            analyzeResult?.sections?.rawAnalysis ||
+            "Sample analysis text: keep intro concise, add bullet list with key facts.";
+          res = await fetch("/api/report/context-vector", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              analysisText: fallbackAnalysis,
+              pageUrl: pageUrl || "https://example.com",
+            }),
+          });
+          break;
+        }
+        default:
+          throw new Error("未支援的端點");
+      }
+
+      const json = await res.json().catch(() => null);
+      if (!res.ok) {
+        throw new Error(json?.error || `Request failed: ${res.status}`);
+      }
+
+      setEndpointStates((prev) => ({
+        ...prev,
+        [ep.path]: { loading: false, data: json, error: null },
+      }));
+    } catch (err) {
+      setEndpointStates((prev) => ({
+        ...prev,
+        [ep.path]: {
+          loading: false,
+          data: prev[ep.path]?.data ?? null,
+          error: err instanceof Error ? err.message : String(err),
+        },
+      }));
+    }
+  };
+
+  return (
+    <main className="min-h-screen bg-slate-50 text-slate-900">
+      <div className="mx-auto flex max-w-5xl flex-col gap-10 px-6 py-12">
+        <header className="space-y-3">
+          <p className="text-sm font-semibold uppercase text-indigo-600">RepostLens API</p>
+          <h1 className="text-3xl font-black tracking-tight">可操作 UI（測試用）</h1>
+          <p className="text-slate-600">
+            直接用預設的 holidaysmart 範例測試 by-url 與 analyze。若要換頁面，可修改欄位後重跑。
+          </p>
+        </header>
+
+        <section className="rounded-xl bg-white p-6 shadow-sm ring-1 ring-slate-200 space-y-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+            <label className="flex-1 text-sm font-semibold text-slate-700">
+              Site
+              <input
+                value={site}
+                onChange={(e) => setSite(e.target.value)}
+                className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm shadow-sm focus:border-indigo-500 focus:outline-none"
+              />
+            </label>
+            <label className="flex-1 text-sm font-semibold text-slate-700">
+              Page URL
+              <input
+                value={pageUrl}
+                onChange={(e) => setPageUrl(e.target.value)}
+                className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm shadow-sm focus:border-indigo-500 focus:outline-none"
+              />
+            </label>
+          </div>
+
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+            <label className="text-sm font-semibold text-slate-700">
+              Start Date (YYYY-MM-DD)
+              <input
+                type="date"
+                value={startDate}
+                onChange={(e) => setStartDate(e.target.value)}
+                className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm shadow-sm focus:border-indigo-500 focus:outline-none"
+              />
+            </label>
+            <label className="text-sm font-semibold text-slate-700">
+              Period Days
+              <input
+                type="number"
+                value={periodDays}
+                min={1}
+                onChange={(e) => setPeriodDays(Number(e.target.value) || 0)}
+                className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm shadow-sm focus:border-indigo-500 focus:outline-none"
+              />
+            </label>
+            <button
+              onClick={handleSearch}
+              disabled={searchLoading}
+              className="h-[42px] rounded bg-indigo-600 px-4 text-sm font-semibold text-white shadow hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {searchLoading ? "Running..." : "Run /api/search/by-url"}
+            </button>
+          </div>
+
+          {searchError && (
+            <div className="rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+              {searchError}
+            </div>
+          )}
+
+          {Array.isArray(searchResult) && (
+            <div className="rounded border border-slate-200 bg-slate-50 p-4">
+              <div className="mb-2 flex items-center justify-between">
+                <p className="text-sm font-semibold text-slate-800">
+                  回傳 {searchResult.length} 筆；下方顯示完整 JSON
+                </p>
+              </div>
+              <pre className="max-h-[360px] overflow-auto rounded bg-slate-900 p-4 text-xs text-slate-50">
+                {pretty(searchResult)}
+              </pre>
+            </div>
+          )}
+        </section>
+
+        <section className="rounded-xl bg-white p-6 shadow-sm ring-1 ring-slate-200 space-y-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-xl font-bold">語意分析（用第一筆結果）</h2>
+              <p className="text-sm text-slate-600">
+                按鈕會帶入第一筆 best_query / clicks / position。
+              </p>
+            </div>
+            <button
+              onClick={handleAnalyze}
+              disabled={!firstRow || analyzeLoading}
+              className="rounded bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {analyzeLoading ? "Analyzing..." : "Run /api/optimize/analyze"}
+            </button>
+          </div>
+          {!firstRow && (
+            <p className="text-sm text-slate-500">請先跑單頁查詢，會自動取第一筆。</p>
+          )}
+          {analyzeError && (
+            <div className="rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+              {analyzeError}
+            </div>
+          )}
+          {analyzeResult && (
+            <pre className="max-h-[360px] overflow-auto rounded bg-slate-900 p-4 text-xs text-slate-50">
+              {pretty(analyzeResult)}
+            </pre>
+          )}
+        </section>
+
+        <section className="rounded-xl bg-white p-6 shadow-sm ring-1 ring-slate-200 space-y-4">
+          <h2 className="text-xl font-bold">核心 API（參考用）</h2>
+          <p className="text-sm text-slate-600">仍保留完整 REST 端點，可直接複製 curl。</p>
+          <div className="space-y-6">
+            {endpoints.map((ep) => (
+              <div key={ep.title} className="rounded border border-slate-200 bg-slate-50 p-4">
+                <div className="flex flex-col gap-1">
+                  <div className="text-xs font-semibold uppercase text-indigo-600">
+                    {ep.path}
+                  </div>
+                  <h3 className="text-lg font-bold">{ep.title}</h3>
+                  <p className="text-sm text-slate-700">{ep.description}</p>
+                </div>
+                <pre className="mt-3 overflow-x-auto rounded bg-slate-900 p-4 text-xs text-slate-50">
+                  <code>{ep.sample}</code>
+                </pre>
+                <div className="mt-3 flex flex-col gap-2">
+                  <div className="flex flex-wrap items-center gap-3">
+                    <button
+                      onClick={() => runEndpoint(ep)}
+                      disabled={endpointStates[ep.path]?.loading}
+                      className="rounded bg-indigo-600 px-3 py-1.5 text-sm font-semibold text-white shadow hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {endpointStates[ep.path]?.loading
+                        ? "Running..."
+                        : `Run ${ep.path.split(" ")[1] ?? ""}`}
+                    </button>
+                    {endpointStates[ep.path]?.error && (
+                      <span className="text-sm text-red-600">
+                        {endpointStates[ep.path]?.error}
+                      </span>
+                    )}
+                  </div>
+                  {endpointStates[ep.path]?.data !== undefined &&
+                    endpointStates[ep.path]?.data !== null && (
+                      <pre className="overflow-x-auto rounded bg-white p-3 text-xs text-slate-900 ring-1 ring-slate-200">
+                        {pretty(endpointStates[ep.path]?.data)}
+                      </pre>
+                    )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      </div>
+    </main>
+  );
+}

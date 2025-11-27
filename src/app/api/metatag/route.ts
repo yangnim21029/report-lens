@@ -105,7 +105,7 @@ export async function POST(req: Request) {
 
     const model = getVertexTextModel();
     const resp = await model.generateContent({
-      system:
+      systemInstruction:
         "You are an elite SEO strategist focused on increasing CTR via meta titles. Follow all rules in the user's instructions. Use Traditional Chinese for narrative content and keep English section headings exactly as provided. Each meta title must be concise, compelling, and under 58 characters, avoiding keyword stuffing or vague promises.",
       contents: [{ role: "user", parts: [{ text: prompt }] }],
     });

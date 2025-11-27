@@ -216,7 +216,7 @@ Provide a concise analysis focusing on semantic hijacking opportunities and impl
   // Step 4: Call Vertex (simplified)
   const model = getVertexTextModel();
   const resp = await model.generateContent({
-    system: "你是 SEO 語義劫持專家，專責分析搜尋意圖與規劃詞組等價策略。",
+    systemInstruction: "你是 SEO 語義劫持專家，專責分析搜尋意圖與規劃詞組等價策略。",
     contents: [{ role: "user", parts: [{ text: prompt }] }],
   });
 
@@ -253,7 +253,7 @@ async function performContextVector(pageUrl: string, analysisText: string) {
 
   const model = getVertexTextModel();
   const response = await model.generateContent({
-    system: "你是資深 SEO 策略師，輸出必須符合指定 JSON 結構。",
+    systemInstruction: "你是資深 SEO 策略師，輸出必須符合指定 JSON 結構。",
     contents: [{ role: "user", parts: [{ text: prompt }] }],
   });
   const text = extractTextFromVertex(response);
@@ -275,7 +275,7 @@ async function performOutline(analysisText: string) {
 
   const model = getVertexTextModel();
   const resp = await model.generateContent({
-    system: "你是資深內容規劃顧問，擅長將分析報告整理成清晰的文章建議大綱。",
+    systemInstruction: "你是資深內容規劃顧問，擅長將分析報告整理成清晰的文章建議大綱。",
     contents: [{ role: "user", parts: [{ text: prompt }] }],
   });
 

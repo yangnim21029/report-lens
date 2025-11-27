@@ -118,17 +118,6 @@ export async function POST(req: Request) {
 ---
 請直接輸出對話內容，不需要列出執行步驟或自我檢查說明。
 `;
-
-        const completion = await openai.chat.completions.create({
-          model: "gpt-5-mini-2025-08-07",
-          messages: [
-            {
-              role: "user",
-              content: structurePrompt,
-            },
-          ],
-        });
-
         const model = getVertexTextModel();
         const resp = await model.generateContent(structurePrompt);
         const generatedContent =
