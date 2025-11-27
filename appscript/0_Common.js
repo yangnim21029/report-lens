@@ -26,6 +26,7 @@ var Config = (function () {
         CONTEXT_VECTOR_BATCH: '/api/report/context-vector-batch',
         OPTIMIZE_ANALYZE: '/api/optimize/analyze',
         SEARCH_BY_URL: '/api/search/by-url',
+        INTERNAL_LINKS: '/api/search/internal-links',
         OUTLINE: '/api/report/outline',
         OUTLINE_BATCH: '/api/report/outline-batch',
 

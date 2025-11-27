@@ -34,7 +34,7 @@ export async function POST(req: Request) {
         const u = new URL(page);
         const host = u.hostname.replace(/^www\./i, "");
         site = `sc-domain:${host}`;
-      } catch {}
+      } catch { }
     }
     if (!site || !page) {
       return NextResponse.json({ error: "Missing site or page" }, { status: 400 });
@@ -44,10 +44,10 @@ export async function POST(req: Request) {
     }
     // ADDED: Validate date parameters
     if (isNaN(periodDays) || periodDays <= 0) {
-        return NextResponse.json({ error: "Invalid periodDays, must be a positive number." }, { status: 400 });
+      return NextResponse.json({ error: "Invalid periodDays, must be a positive number." }, { status: 400 });
     }
     if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate)) {
-        return NextResponse.json({ error: "Invalid startDate, must be in YYYY-MM-DD format." }, { status: 400 });
+      return NextResponse.json({ error: "Invalid startDate, must be in YYYY-MM-DD format." }, { status: 400 });
     }
 
     // Try primary query with variants
@@ -57,43 +57,47 @@ export async function POST(req: Request) {
       const result = await queryVariants(site, variants, startDate, periodDays);
       if (result) return NextResponse.json(result, { status: 200 });
     } catch (err) {
-        // Log the error from queryVariants but continue to the next strategy
-        console.error("Error querying URL variants:", err);
+      // Log the error from queryVariants but continue to the next strategy
+      console.error("Error querying URL variants:", err);
     }
 
     // Fallback: try wildcard by article ID (e.g., /article/123217%)
     const likePrefix = toArticleIdPrefix(page);
     if (likePrefix) {
-      // CHANGED: Pass startDate and periodDays to the LIKE query builder
-      const sqlLike = buildSqlForPageLike(site, likePrefix, startDate, periodDays);
-      const resp2 = await fetch(
-        `${GSC_DB_ENDPOINT}/api/query`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "ngrok-skip-browser-warning": "true",
+      try {
+        // CHANGED: Pass startDate and periodDays to the LIKE query builder
+        const sqlLike = buildSqlForPageLike(site, likePrefix, startDate, periodDays);
+        const resp2 = await fetch(
+          `${GSC_DB_ENDPOINT}/api/query`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "ngrok-skip-browser-warning": "true",
+            },
+            body: JSON.stringify({ site, sql: sqlLike }),
           },
-          body: JSON.stringify({ site, sql: sqlLike }),
-        },
-      );
-      const text2 = await resp2.text();
-      if (!resp2.ok) {
-        return NextResponse.json(
-          { error: "Upstream error (LIKE query)", status: resp2.status, body: text2.slice(0, 500) },
-          { status: 502 },
         );
-      }
-      let data2: any;
-      try { data2 = JSON.parse(text2); } catch { data2 = []; }
-      // Normalize response data
-      let result2: unknown[] = [];
-      if (Array.isArray(data2)) result2 = data2;
-      else if (data2?.data && Array.isArray(data2.data)) result2 = data2.data;
-      else if (data2?.results && Array.isArray(data2.results)) result2 = data2.results;
-      else if (data2?.rows && Array.isArray(data2.rows)) result2 = data2.rows;
-      if (result2.length > 0) {
-        return NextResponse.json(result2, { status: 200 });
+        const text2 = await resp2.text();
+        if (!resp2.ok) {
+          // Log the error but don't fail the entire request
+          console.warn(`Upstream error (LIKE query): ${resp2.status} - ${text2.slice(0, 200)}`);
+        } else {
+          let data2: any;
+          try { data2 = JSON.parse(text2); } catch { data2 = []; }
+          // Normalize response data
+          let result2: unknown[] = [];
+          if (Array.isArray(data2)) result2 = data2;
+          else if (data2?.data && Array.isArray(data2.data)) result2 = data2.data;
+          else if (data2?.results && Array.isArray(data2.results)) result2 = data2.results;
+          else if (data2?.rows && Array.isArray(data2.rows)) result2 = data2.rows;
+          if (result2.length > 0) {
+            return NextResponse.json(result2, { status: 200 });
+          }
+        }
+      } catch (err) {
+        // Log network or other errors but don't fail the entire request
+        console.warn("Error in LIKE query fallback:", err);
       }
     }
 
@@ -481,28 +485,39 @@ LIMIT 1;
 // CHANGED: Function now accepts and passes through the date parameters
 async function queryVariants(site: string, variants: string[], startDate: string, periodDays: number): Promise<unknown[] | null> {
   for (const p of variants) {
-    const sql = buildSqlForPage(site, p, startDate, periodDays);
-    const response = await fetch(
-      `${GSC_DB_ENDPOINT}/api/query`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "true" },
-        body: JSON.stringify({ site, sql }),
-      },
-    );
-    const text = await response.text();
-    if (!response.ok) {
-      throw new Error(`Upstream error ${response.status}: ${text.slice(0, 500)}`);
-    }
-    let data: any;
-    try { data = JSON.parse(text); } catch { data = []; }
-    let result: unknown[] = [];
-    if (Array.isArray(data)) result = data;
-    else if (data?.data && Array.isArray(data.data)) result = data.data;
-    else if (data?.results && Array.isArray(data.results)) result = data.results;
-    else if (data?.rows && Array.isArray(data.rows)) result = data.rows;
-    if (result.length > 0) {
-      return result;
+    try {
+      const sql = buildSqlForPage(site, p, startDate, periodDays);
+      const response = await fetch(
+        `${GSC_DB_ENDPOINT}/api/query`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "true" },
+          body: JSON.stringify({ site, sql }),
+        },
+      );
+      const text = await response.text();
+      if (!response.ok) {
+        // Log the error but continue to next variant instead of throwing
+        console.warn(`Upstream error for variant ${p}: ${response.status} - ${text.slice(0, 200)}`);
+        continue;
+      }
+      let data: any;
+      try { data = JSON.parse(text); } catch {
+        console.warn(`Failed to parse response for variant ${p}`);
+        continue;
+      }
+      let result: unknown[] = [];
+      if (Array.isArray(data)) result = data;
+      else if (data?.data && Array.isArray(data.data)) result = data.data;
+      else if (data?.results && Array.isArray(data.results)) result = data.results;
+      else if (data?.rows && Array.isArray(data.rows)) result = data.rows;
+      if (result.length > 0) {
+        return result;
+      }
+    } catch (err) {
+      // Catch network or other errors and continue to next variant
+      console.warn(`Error querying variant ${p}:`, err);
+      continue;
     }
   }
   return null;

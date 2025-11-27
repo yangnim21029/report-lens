@@ -106,6 +106,38 @@ var ReportService = (function () {
     }
 
     /**
+     * 調用 internal-links API 取得內部連結候選
+     */
+    function getInternalLinks(site, keyword) {
+        var endpoint = Config.API_ENDPOINTS.REPORT_API_BASE + Config.API_ENDPOINTS.INTERNAL_LINKS;
+        var payload = {
+            site: site,
+            keyword: keyword,
+            limit: 5,
+            periodDays: 180
+        };
+
+        var response = ApiClient.post(endpoint, payload);
+        var json = response.json();
+
+        if (!json) {
+            throw new Error('internal-links 返回無效數據');
+        }
+
+        var results = [];
+        if (Array.isArray(json.results)) {
+            results = json.results;
+        } else if (Array.isArray(json)) {
+            results = json;
+        }
+
+        return {
+            tokens: json.tokens || [],
+            results: results
+        };
+    }
+
+    /**
      * 調用 outline API
      */
     function getOutline(analysisText) {
@@ -164,7 +196,8 @@ var ReportService = (function () {
         getContextVector: getContextVector,
         getOutline: getOutline,
         getContextVectorBatch: getContextVectorBatch,
-        getOutlineBatch: getOutlineBatch
+        getOutlineBatch: getOutlineBatch,
+        getInternalLinks: getInternalLinks
     };
 })();
 
@@ -258,6 +291,19 @@ var DocumentService = (function () {
             table2.setBorderWidth(1);
         }
 
+        // 內部連結建議
+        if (sections.internalLinksTable && sections.internalLinksTable.rows) {
+            var headingLink = body.appendParagraph(sections.internalLinksTable.title || 'Internal Link Suggestions');
+            headingLink.setHeading(DocumentApp.ParagraphHeading.HEADING2);
+
+            if (sections.internalLinkTokens && sections.internalLinkTokens.length) {
+                body.appendParagraph('Tokenized Keywords: ' + sections.internalLinkTokens.join(', '));
+            }
+
+            var tableLink = body.appendTable([sections.internalLinksTable.headers].concat(sections.internalLinksTable.rows));
+            tableLink.setBorderWidth(1);
+        }
+
         // 調整建議表格
         if (sections.adjustmentsTable && sections.adjustmentsTable.rows) {
             var heading3 = body.appendParagraph(sections.adjustmentsTable.title || 'Content Adjustments');
@@ -312,7 +358,7 @@ var DataProcessor = (function () {
     /**
      * 準備文檔段落（整合所有數據）
      */
-    function prepareDocSections(pageUrl, searchRow, outline, analyzeData, contextResult) {
+    function prepareDocSections(pageUrl, searchRow, outline, analyzeData, contextResult, internalLinks) {
         return {
             heroPage: Utils.decodeURISafe(pageUrl),
             heroPageUrl: String(pageUrl || ''),
@@ -320,6 +366,8 @@ var DataProcessor = (function () {
             keywordSummaryTable: buildKeywordSummaryTable(searchRow, analyzeData),
             coverageTable: buildCoverageTable(analyzeData),
             adjustmentsTable: buildAdjustmentsTable(contextResult),
+            internalLinksTable: buildInternalLinksTable(internalLinks),
+            internalLinkTokens: internalLinks && internalLinks.tokens ? internalLinks.tokens : [],
             outlineEntries: parseOutlineEntries(outline)
         };
     }
@@ -399,6 +447,32 @@ var DataProcessor = (function () {
     }
 
     /**
+     * 建立內部連結建議表格
+     */
+    function buildInternalLinksTable(internalLinks) {
+        if (!internalLinks || !internalLinks.results || internalLinks.results.length === 0) return null;
+
+        var rows = [];
+        for (var i = 0; i < internalLinks.results.length; i++) {
+            var link = internalLinks.results[i];
+            rows.push([
+                Utils.decodeURISafe(link.page || ''),
+                Utils.formatNumber(link.clicks),
+                Utils.formatNumber(link.impressions),
+                Utils.formatNumber(link.position, 1),
+                Utils.sanitizeString(link.topQuery || ''),
+                Utils.sanitizeMultiline(link.matchedQueries || '')
+            ]);
+        }
+
+        return {
+            title: 'Internal Link Suggestions',
+            headers: ['URL', 'Clicks', 'Impressions', 'Avg Position', 'Top Query', 'Matched Queries'],
+            rows: rows
+        };
+    }
+
+    /**
      * 建立調整建議表格
      */
     function buildAdjustmentsTable(contextResult) {
@@ -467,6 +541,39 @@ var DataProcessor = (function () {
 })();
 
 // ============================================================
+// Helpers - Payload 縮減工具
+// ============================================================
+function buildCompactAnalysisPayload(freshAnalysis) {
+    var compact = {
+        analysis: String(freshAnalysis && freshAnalysis.analysis ? freshAnalysis.analysis : ''),
+        keywordCoverage: freshAnalysis && freshAnalysis.keywordCoverage ? freshAnalysis.keywordCoverage : null,
+        topRankKeywords: freshAnalysis && freshAnalysis.topRankKeywords ? freshAnalysis.topRankKeywords : null,
+        rankKeywords: freshAnalysis && freshAnalysis.rankKeywords ? freshAnalysis.rankKeywords : null
+    };
+
+    var json = JSON.stringify(compact);
+
+    // Google Sheet 單一儲存格最多 50,000 字元，保留安全餘量
+    if (json.length > 48000 && compact.analysis) {
+        compact.analysis = compact.analysis.slice(0, 30000);
+        json = JSON.stringify(compact);
+    }
+    if (json.length > 48000 && compact.analysis) {
+        compact.analysis = compact.analysis.slice(0, 20000);
+        json = JSON.stringify(compact);
+    }
+    if (json.length > 48000 && compact.analysis) {
+        compact.analysis = '';
+        json = JSON.stringify(compact);
+    }
+    if (json.length > 48000) {
+        json = json.slice(0, 48000);
+    }
+
+    return json;
+}
+
+// ============================================================
 // RepostLensController - 主控制器（UI 入口）
 // ============================================================
 var RepostLensController = (function () {
@@ -532,6 +639,16 @@ var RepostLensController = (function () {
                 return;
             }
 
+            // 內部連結建議
+            var internalLinks = null;
+            if (searchRow.best_query) {
+                try {
+                    internalLinks = ReportService.getInternalLinks(site, searchRow.best_query);
+                } catch (e) {
+                    Utils.log('[processRow] internal-links 失敗: ' + e.message);
+                }
+            }
+
             // 獲取或生成分析
             var analyzeData = Utils.safeJsonParse(analysisCell.getValue());
             var analysisText = analyzeData && analyzeData.analysis ? analyzeData.analysis : '';
@@ -539,7 +656,8 @@ var RepostLensController = (function () {
             if (!analysisText) {
                 var freshAnalysis = ReportService.analyzeOptimization(searchRow);
                 analysisText = freshAnalysis.analysis || '';
-                analysisCell.setValue(JSON.stringify(freshAnalysis));
+                var compactPayload = buildCompactAnalysisPayload(freshAnalysis);
+                analysisCell.setValue(compactPayload);
             }
 
             if (!analysisText) {
@@ -557,7 +675,8 @@ var RepostLensController = (function () {
                 searchRow,
                 outline,
                 analyzeData,
-                contextResult
+                contextResult,
+                internalLinks
             );
 
             // 寫入預覽
