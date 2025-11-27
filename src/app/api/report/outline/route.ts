@@ -1,8 +1,5 @@
 import { NextResponse } from "next/server";
-import { OpenAI } from "openai";
-import { env } from "~/env";
-
-const openai = new OpenAI({ apiKey: env.OPENAI_API_KEY });
+import { getVertexTextModel } from "~/server/vertex/client";
 
 export async function POST(req: Request) {
   try {
@@ -15,19 +12,14 @@ export async function POST(req: Request) {
 
     const prompt = buildOutlinePrompt(analysisText);
 
-    const completion = await openai.chat.completions.create({
-      model: "gpt-5-mini-2025-08-07",
-      messages: [
-        {
-          role: "system",
-          content:
-            "你是資深內容規劃顧問，擅長將分析報告整理成清晰的文章建議大綱，輸出請使用與 user prompt 相同的語言。",
-        },
-        { role: "user", content: prompt },
-      ],
-    });
-
-    const outline = completion.choices[0]?.message?.content?.trim() ?? "";
+    const model = getVertexTextModel();
+    const response = await model.generateContent(prompt);
+    const vertexResponse = await response.response;
+    const outline =
+      vertexResponse.candidates?.[0]?.content?.parts
+        ?.map((part) => part.text ?? "")
+        .join("")
+        .trim() ?? "";
     if (!outline) {
       return NextResponse.json({ success: false, error: "Empty outline" }, { status: 502 });
     }

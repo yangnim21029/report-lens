@@ -1,10 +1,7 @@
 import { NextResponse } from "next/server";
-import { OpenAI } from "openai";
-import { env } from "~/env";
+import { getVertexTextModel } from "~/server/vertex/client";
 import { fetchKeywordCoverage, type CoverageItem } from "~/utils/keyword-coverage";
 import { collectAllCurrentRows, normalizeKeyword } from "~/components/data-card-helpers";
-
-const openai = new OpenAI({ apiKey: env.OPENAI_API_KEY });
 
 type KeywordMetric = {
   keyword: string;
@@ -106,19 +103,18 @@ export async function POST(req: Request) {
       targetKeyword,
     });
 
-    const completion = await openai.chat.completions.create({
-      model: "gpt-5-mini-2025-08-07",
-      messages: [
-        {
-          role: "system",
-          content:
-            "You are an elite SEO strategist focused on increasing CTR via meta titles. Follow all rules in the user's instructions. Use Traditional Chinese for narrative content and keep English section headings exactly as provided. Each meta title must be concise, compelling, and under 58 characters, avoiding keyword stuffing or vague promises.",
-        },
-        { role: "user", content: prompt },
-      ],
+    const model = getVertexTextModel();
+    const resp = await model.generateContent({
+      system:
+        "You are an elite SEO strategist focused on increasing CTR via meta titles. Follow all rules in the user's instructions. Use Traditional Chinese for narrative content and keep English section headings exactly as provided. Each meta title must be concise, compelling, and under 58 characters, avoiding keyword stuffing or vague promises.",
+      contents: [{ role: "user", parts: [{ text: prompt }] }],
     });
 
-    const report = completion.choices?.[0]?.message?.content?.trim() ?? "";
+    const report =
+      resp.response?.candidates?.[0]?.content?.parts
+        ?.map((p) => p.text ?? "")
+        .join("")
+        .trim() ?? "";
     if (!report) {
       return NextResponse.json({ success: false, error: "Meta title generation returned empty response." }, { status: 502 });
     }

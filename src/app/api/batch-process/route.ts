@@ -1,14 +1,10 @@
 import { NextResponse } from "next/server";
-import { OpenAI } from "openai";
 import { z } from "zod";
-import { zodTextFormat } from "openai/helpers/zod";
 import { convert } from "html-to-text";
-import { env } from "~/env";
+import { getVertexTextModel } from "~/server/vertex/client";
 import { fetchKeywordCoverage, buildCoveragePromptParts } from "~/utils/keyword-coverage";
 import type { CoverageItem } from "~/utils/keyword-coverage";
 import { fetchContentExplorerForQueries } from "~/utils/search-traffic";
-
-const openai = new OpenAI({ apiKey: env.OPENAI_API_KEY });
 
 // Batch input schema
 const BatchItemSchema = z.object({
@@ -217,22 +213,14 @@ ${textContent.substring(0, 4000)}
 Provide a concise analysis focusing on semantic hijacking opportunities and implementation recommendations.
 `;
 
-  // Step 4: Call OpenAI (simplified)
-  const completion = await openai.chat.completions.create({
-    model: "gpt-5-mini-2025-08-07",
-    messages: [
-      {
-        role: "system",
-        content: "你是 SEO 語義劫持專家，專責分析搜尋意圖與規劃詞組等價策略。",
-      },
-      {
-        role: "user",
-        content: prompt,
-      },
-    ],
+  // Step 4: Call Vertex (simplified)
+  const model = getVertexTextModel();
+  const resp = await model.generateContent({
+    system: "你是 SEO 語義劫持專家，專責分析搜尋意圖與規劃詞組等價策略。",
+    contents: [{ role: "user", parts: [{ text: prompt }] }],
   });
 
-  const analysis = completion.choices[0]?.message?.content || "無法生成分析結果";
+  const analysis = extractTextFromVertex(resp) || "無法生成分析結果";
 
   return { analysis };
 }
@@ -263,21 +251,20 @@ async function performContextVector(pageUrl: string, analysisText: string) {
 
   const prompt = buildContextVectorPrompt(analysisText, articlePlain);
 
-  const response = await openai.responses.parse({
-    model: "gpt-5-mini-2025-08-07",
-    input: [
-      { role: "system", content: "你是資深 SEO 策略師，輸出必須符合指定 JSON 結構。" },
-      { role: "user", content: prompt },
-    ],
-    text: {
-      format: zodTextFormat(ContextVectorResponseSchema, "context_vector"),
-    },
-  }).catch((err) => {
-    console.warn("[context-vector] parse error", err);
-    return null;
+  const model = getVertexTextModel();
+  const response = await model.generateContent({
+    system: "你是資深 SEO 策略師，輸出必須符合指定 JSON 結構。",
+    contents: [{ role: "user", parts: [{ text: prompt }] }],
   });
+  const text = extractTextFromVertex(response);
 
-  const parsed = response?.output_parsed ?? { suggestions: [] };
+  let parsed: z.infer<typeof ContextVectorResponseSchema> | null = null;
+  try {
+    parsed = ContextVectorResponseSchema.parse(JSON.parse(text));
+  } catch (err) {
+    console.warn("[context-vector] parse error", err);
+    parsed = { suggestions: [] };
+  }
   const suggestions = (parsed?.suggestions ?? []).map(normalizeSuggestion);
 
   return { suggestions };
@@ -286,18 +273,17 @@ async function performContextVector(pageUrl: string, analysisText: string) {
 async function performOutline(analysisText: string) {
   const prompt = buildOutlinePrompt(analysisText);
 
-  const completion = await openai.chat.completions.create({
-    model: "gpt-5-mini-2025-08-07",
-    messages: [
-      {
-        role: "system",
-        content: "你是資深內容規劃顧問，擅長將分析報告整理成清晰的文章建議大綱。",
-      },
-      { role: "user", content: prompt },
-    ],
+  const model = getVertexTextModel();
+  const resp = await model.generateContent({
+    system: "你是資深內容規劃顧問，擅長將分析報告整理成清晰的文章建議大綱。",
+    contents: [{ role: "user", parts: [{ text: prompt }] }],
   });
 
-  const outline = completion.choices[0]?.message?.content?.trim() ?? "";
+  const outline =
+    resp.response?.candidates?.[0]?.content?.parts
+      ?.map((p) => p.text ?? "")
+      .join("")
+      .trim() ?? "";
   
   return { outline };
 }
@@ -355,4 +341,14 @@ function normalizeSuggestion(s: ContextVectorSuggestion) {
     adjustAsFollows: s.adjustAsFollows.trim(),
     afterAdjust: (typeof s.afterAdjust === 'string' ? s.afterAdjust : '').trim(),
   } satisfies ContextVectorSuggestion;
+}
+
+function extractTextFromVertex(
+  resp: Awaited<ReturnType<ReturnType<typeof getVertexTextModel>["generateContent"]>>
+) {
+  const parts = resp.response?.candidates?.[0]?.content?.parts || [];
+  return parts
+    .map((p) => (typeof p.text === "string" ? p.text : ""))
+    .join("")
+    .trim();
 }

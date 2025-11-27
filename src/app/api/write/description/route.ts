@@ -1,8 +1,5 @@
 import { NextResponse } from "next/server";
-import { OpenAI } from "openai";
-import { env } from "~/env";
-
-const openai = new OpenAI({ apiKey: env.OPENAI_API_KEY });
+import { getVertexTextModel } from "~/server/vertex/client";
 
 export async function POST(req: Request) {
   try {
@@ -132,17 +129,13 @@ ${outline}
 - 保持原本的 h2/h3 結構
 `;
 
-    const completion = await openai.chat.completions.create({
-      model: "gpt-5-mini-2025-08-07",
-      messages: [
-        {
-          role: "user",
-          content: descriptionPrompt,
-        },
-      ],
-    });
-
-    const generatedContent = completion.choices[0]?.message?.content?.trim() || "";
+    const model = getVertexTextModel();
+    const resp = await model.generateContent(descriptionPrompt);
+    const generatedContent =
+      resp.response?.candidates?.[0]?.content?.parts
+        ?.map((p) => p.text ?? "")
+        .join("")
+        .trim() || "";
 
     if (!generatedContent) {
       return NextResponse.json(

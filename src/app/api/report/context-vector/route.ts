@@ -1,10 +1,6 @@
 import { NextResponse } from "next/server";
-import OpenAI from "openai";
 import { z } from "zod";
-import { zodTextFormat } from "openai/helpers/zod";
-import { env } from "~/env";
-
-const openai = new OpenAI({ apiKey: env.OPENAI_API_KEY });
+import { getVertexTextModel } from "~/server/vertex/client";
 
 const ContextVectorSuggestionSchema = z.object({
   before: z.string().min(20),
@@ -101,21 +97,17 @@ export async function POST(req: Request) {
 
     const prompt = buildContextVectorPrompt(String(analysisText || ""), articlePlain);
 
-    const response = await openai.responses.parse({
-      model: "gpt-5-mini-2025-08-07",
-      input: [
-        { role: "system", content: "你是資深 SEO 策略師，輸出必須符合指定 JSON 結構。" },
-        { role: "user", content: prompt },
-      ],
-      text: {
-        format: zodTextFormat(ContextVectorResponseSchema, "context_vector"),
-      },
-    }).catch((err) => {
-      console.warn("[context-vector] parse error", err);
-      return null;
-    });
+    const model = getVertexTextModel();
+    const resp = await model.generateContent(prompt);
+    const text = extractTextFromVertex(resp);
 
-    const parsed = response?.output_parsed ?? { suggestions: [] };
+    let parsed: z.infer<typeof ContextVectorResponseSchema> | null = null;
+    try {
+      parsed = ContextVectorResponseSchema.parse(JSON.parse(text));
+    } catch (err) {
+      console.warn("[context-vector] parse fallback error", err);
+      parsed = { suggestions: [] };
+    }
     const suggestions = (parsed?.suggestions ?? []).map(normalizeSuggestion);
     const markdown = buildMarkdownTable(suggestions);
 
@@ -222,6 +214,16 @@ After each suggestion list is built, quickly 驗證其結構、內容完整度�
 - 當 analysisText 或 articleText 任一輸入為空，視同無可調整，回傳 {"suggestions": []}。
 - 若內容長度未達最低要求（before/afterAdjust 至少 20 字），可略過該片段，不產生對應建議，亦不需報錯。
 `;
+}
+
+function extractTextFromVertex(
+  resp: Awaited<ReturnType<ReturnType<typeof getVertexTextModel>["generateContent"]>>
+) {
+  const parts = resp.response?.candidates?.[0]?.content?.parts || [];
+  return parts
+    .map((p) => (typeof p.text === "string" ? p.text : ""))
+    .join("")
+    .trim();
 }
 
 function normalizeSuggestion(s: ContextVectorSuggestion) {

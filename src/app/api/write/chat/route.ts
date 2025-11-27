@@ -1,8 +1,5 @@
 import { NextResponse } from "next/server";
-import { OpenAI } from "openai";
-import { env } from "~/env";
-
-const openai = new OpenAI({ apiKey: env.OPENAI_API_KEY });
+import { getVertexTextModel } from "~/server/vertex/client";
 
 export async function POST(req: Request) {
   try {
@@ -132,7 +129,13 @@ export async function POST(req: Request) {
           ],
         });
 
-        const generatedContent = completion.choices[0]?.message?.content?.trim() || "";
+        const model = getVertexTextModel();
+        const resp = await model.generateContent(structurePrompt);
+        const generatedContent =
+          resp.response?.candidates?.[0]?.content?.parts
+            ?.map((p) => p.text ?? "")
+            .join("")
+            .trim() || "";
 
         if (!generatedContent) {
           throw new Error("Failed to generate content");

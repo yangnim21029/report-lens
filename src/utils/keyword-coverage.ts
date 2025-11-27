@@ -1,4 +1,4 @@
-import type { OpenAI } from "openai";
+import { getVertexTextModel } from "~/server/vertex/client";
 
 export interface GscStats {
   clicks: number;
@@ -69,11 +69,10 @@ export function buildCoveragePromptParts(covered: CoverageItem[], uncovered: Cov
 }
 
 /**
- * Optional: Ask OpenAI to pick promising uncovered keywords based on covered+GSC context.
+ * Optional: Ask Vertex (Gemini) to pick promising uncovered keywords based on covered+GSC context.
  * Returns a newline-separated list of keywords or a short status string.
  */
-export async function requestOpenAISuggestions(
-  openaiClient: OpenAI,
+export async function requestVertexSuggestions(
   covered: CoverageItem[],
   uncovered: CoverageItem[],
   opts?: { model?: string }
@@ -100,15 +99,16 @@ ${uncoveredText}
 - 不要包含任何解釋、標題、編號或符號；
 - 若沒有建議，僅輸出「無建議」。`;
 
-  const model = opts?.model ?? "gpt-4.1-mini";
-
-  const completion = await openaiClient.chat.completions.create({
-    model,
-    temperature: 0.2,
-    max_tokens: 300,
-    messages: [{ role: "user", content: prompt }],
+  const model = getVertexTextModel(opts?.model);
+  const resp = await model.generateContent({
+    contents: [{ role: "user", parts: [{ text: prompt }] }],
+    generationConfig: { temperature: 0.2, maxOutputTokens: 300 },
   });
 
-  return completion.choices?.[0]?.message?.content?.trim() || "無建議";
+  return (
+    resp.response?.candidates?.[0]?.content?.parts
+      ?.map((p) => p.text ?? "")
+      .join("")
+      .trim() || "無建議"
+  );
 }
-

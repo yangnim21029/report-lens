@@ -1,12 +1,9 @@
 import { NextResponse } from "next/server";
-import { OpenAI } from "openai";
 import { convert } from "html-to-text";
-import { env } from "~/env";
+import { getVertexTextModel } from "~/server/vertex/client";
 import { fetchKeywordCoverage, buildCoveragePromptParts } from "~/utils/keyword-coverage";
 import type { CoverageItem } from "~/utils/keyword-coverage";
 import { fetchContentExplorerForQueries } from "~/utils/search-traffic";
-
-const openai = new OpenAI({ apiKey: env.OPENAI_API_KEY });
 
 // Direct implementation of analyze: fetch page HTML, extract text, build prompt, call OpenAI.
 export async function POST(req: Request) {
@@ -446,27 +443,17 @@ ${coverageBlock}${contentExplorerBlock}`;
     console.log("\n===== RepostLens Analyze Prompt =====\n" + prompt + "\n===== End Analyze Prompt =====\n");
 
 
-    // Step 4: Call OpenAI
-    const completion = await openai.chat.completions.create({
-      model: "gpt-5-mini-2025-08-07", // most advanced model available
-      messages: [
-        {
-          role: "system",
-          content: `## 你的角色
+    // Step 4: Call Vertex (Gemini)
+    const model = getVertexTextModel();
+    const resp = await model.generateContent({
+      system: `## 你的角色
 你是 SEO 語義劫持專家，專責分析搜尋意圖與規劃詞組等價策略。
 分析指定文章的 SEO 語意劫持機會，並基於 Rank 4-10 的關鍵字數據，設計使用 Best Query 進行語意等價策略。
 - Analyze the SEO intent capture potential for this article and devise strategies to leverage Rank 4-10 keyword data for semantically equivalent query planning.
 `,
-        },
-        {
-          role: "user",
-          content: prompt,
-        },
-      ],
+      contents: [{ role: "user", parts: [{ text: prompt }] }],
     });
-
-    const analysis =
-      completion.choices[0]?.message?.content || "無法生成分析結果";
+    const analysis = extractTextFromVertex(resp) || "無法生成分析結果";
 
     // Step 5: Build sections (light parsing)
     const sections = splitSections(analysis);
@@ -545,4 +532,14 @@ function splitSections(md: string) {
     structuralChanges: get("Implementation Priority"),
     rawAnalysis: md,
   };
+}
+
+function extractTextFromVertex(
+  resp: Awaited<ReturnType<ReturnType<typeof getVertexTextModel>["generateContent"]>>
+) {
+  const parts = resp.response?.candidates?.[0]?.content?.parts || [];
+  return parts
+    .map((p) => (typeof p.text === "string" ? p.text : ""))
+    .join("")
+    .trim();
 }

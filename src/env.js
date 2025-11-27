@@ -7,19 +7,22 @@ export const env = createEnv({
 	 * isn't built with invalid env vars.
 	 */
 	server: {
-		AUTH_SECRET:
-			process.env.NODE_ENV === "production"
-				? z.string()
-				: z.string().optional(),
-		AUTH_DISCORD_ID: z.string(),
-		AUTH_DISCORD_SECRET: z.string(),
-		DATABASE_URL: z.string().url(),
+		AUTH_SECRET: z.string().optional(),
+		AUTH_DISCORD_ID: z.string().optional(),
+		AUTH_DISCORD_SECRET: z.string().optional(),
+		DATABASE_URL: z.string().url().optional(),
 		NODE_ENV: z
 			.enum(["development", "test", "production"])
 			.default("development"),
-		OPENAI_API_KEY: z.string(),
+		OPENAI_API_KEY: z.string().optional(),
 		GOOGLE_CHAT_WEBHOOK_URL: z.string().url().optional(),
 		GSC_DB_ENDPOINT: z.string().url(),
+		GOOGLE_PROJECT_ID: z.string().optional(),
+		GOOGLE_CLIENT_EMAIL: z.string().optional(),
+		GOOGLE_PRIVATE_KEY: z.string().optional(),
+		VERTEXAI_PROJECT: z.string().optional(),
+		VERTEXAI_LOCATION: z.string().optional(),
+		VERTEXAI_TEXT_MODEL: z.string().optional(),
 	},
 
 	/**
@@ -44,6 +47,12 @@ export const env = createEnv({
 		OPENAI_API_KEY: process.env.OPENAI_API_KEY,
 		GOOGLE_CHAT_WEBHOOK_URL: process.env.GOOGLE_CHAT_WEBHOOK_URL,
 		GSC_DB_ENDPOINT: process.env.GSC_DB_ENDPOINT,
+		GOOGLE_PROJECT_ID: process.env.GOOGLE_PROJECT_ID,
+		GOOGLE_CLIENT_EMAIL: process.env.GOOGLE_CLIENT_EMAIL,
+		GOOGLE_PRIVATE_KEY: process.env.GOOGLE_PRIVATE_KEY,
+		VERTEXAI_PROJECT: process.env.VERTEXAI_PROJECT,
+		VERTEXAI_LOCATION: process.env.VERTEXAI_LOCATION,
+		VERTEXAI_TEXT_MODEL: process.env.VERTEXAI_TEXT_MODEL,
 	},
 	/**
 	 * Run `build` or `dev` with `SKIP_ENV_VALIDATION` to skip env validation. This is especially
