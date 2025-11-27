@@ -1,7 +1,11 @@
 import { NextResponse } from "next/server";
+import type { NextRequest } from "next/server";
+import { env } from "~/env";
 import { z } from "zod";
 import { convert } from "html-to-text";
 import { getVertexTextModel } from "~/server/vertex/client";
+
+export const runtime = "nodejs";
 import { fetchKeywordCoverage, buildCoveragePromptParts } from "~/utils/keyword-coverage";
 import type { CoverageItem } from "~/utils/keyword-coverage";
 import { fetchContentExplorerForQueries } from "~/utils/search-traffic";
@@ -70,10 +74,10 @@ export async function POST(req: Request) {
       batch.map(async (item, index) => {
         try {
           console.log(`[batch-process] Processing item ${index + 1}/${batch.length}: ${item.url}`);
-          
+
           // 處理單一項目
           const result = await processSingleItem(item);
-          
+
           console.log(`[batch-process] Completed item ${index + 1}/${batch.length}: ${item.url}`);
           return result;
         } catch (error) {
@@ -112,13 +116,13 @@ async function processSingleItem(item: BatchItem) {
   try {
     // Step 1: 執行 analyze
     const analysisResult = await performAnalyze(item);
-    
+
     // Step 2: 執行 context-vector
     const contextResult = await performContextVector(item.url, analysisResult.analysis);
-    
+
     // Step 3: 執行 outline
     const outlineResult = await performOutline(analysisResult.analysis);
-    
+
     return {
       success: true,
       analysis: analysisResult.analysis,
@@ -132,17 +136,17 @@ async function processSingleItem(item: BatchItem) {
 
 async function performAnalyze(input: BatchItem) {
   const page = input.page;
-  
+
   // Step 1: Fetch article HTML (reused from analyze API)
   const contentResponse = await fetch(page, {
     headers: { "User-Agent": "Mozilla/5.0 (compatible; RepostLens/1.0)" },
     cache: "no-store",
   });
-  
+
   if (!contentResponse.ok) {
     throw new Error(`Fetch failed: ${contentResponse.status}`);
   }
-  
+
   const html = await contentResponse.text();
 
   // Step 2: Extract main content (reused from analyze API)
@@ -172,11 +176,11 @@ async function performAnalyze(input: BatchItem) {
   const highRankArray = [input?.rank1, input?.rank2, input?.rank3]
     .filter(Boolean)
     .map((line: unknown) => String(line || ""));
-  
+
   const keywordsArray = [input?.rank4, input?.rank5, input?.rank6, input?.rank7, input?.rank8, input?.rank9, input?.rank10]
     .filter(Boolean)
     .map((line: unknown) => String(line || ""));
-  
+
   const keywordsList = keywordsArray.join("\n");
 
   const region = page.includes("holidaysmart.io") ? (page.match(/\/(hk|tw|sg|my|cn)\//i)?.[1]?.toLowerCase() || "hk") : "hk";
@@ -228,14 +232,14 @@ Provide a concise analysis focusing on semantic hijacking opportunities and impl
 async function performContextVector(pageUrl: string, analysisText: string) {
   // 簡化版的 context-vector 處理
   let articlePlain = "";
-  
+
   try {
     // 嘗試獲取文章內容
     const response = await fetch(pageUrl, {
       method: "GET",
       headers: { "User-Agent": "Mozilla/5.0 (compatible; RepostLens/1.0)" },
     });
-    
+
     if (response.ok) {
       const html = await response.text();
       articlePlain = toPlainText(html).slice(0, 8000);
@@ -284,7 +288,7 @@ async function performOutline(analysisText: string) {
       ?.map((p) => p.text ?? "")
       .join("")
       .trim() ?? "";
-  
+
   return { outline };
 }
 

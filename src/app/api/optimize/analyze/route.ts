@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
+import type { NextRequest } from "next/server";
 import { convert } from "html-to-text";
 import { getVertexTextModel } from "~/server/vertex/client";
+
+export const runtime = "nodejs";
 import { fetchKeywordCoverage, buildCoveragePromptParts } from "~/utils/keyword-coverage";
 import type { CoverageItem } from "~/utils/keyword-coverage";
 import { fetchContentExplorerForQueries } from "~/utils/search-traffic";

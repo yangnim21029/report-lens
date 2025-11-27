@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { getVertexTextModel } from "~/server/vertex/client";
 
+export const runtime = "nodejs";
+
 interface BatchItem {
   analysisText: string;
 }
@@ -29,7 +31,7 @@ export async function POST(req: Request) {
       items.map(async (item: BatchItem): Promise<BatchResult> => {
         try {
           const analysisText = typeof item.analysisText === "string" ? item.analysisText.trim() : "";
-          
+
           if (!analysisText) {
             return {
               success: false,
@@ -46,7 +48,7 @@ export async function POST(req: Request) {
               ?.map((part) => part.text ?? "")
               .join("")
               .trim() ?? "";
-          
+
           if (!outline) {
             return {
               success: false,

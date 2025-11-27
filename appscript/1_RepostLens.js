@@ -1,0 +1,651 @@
+// ============================================================
+// 1_RepostLens.js - RepostLens 完整功能模組
+// ============================================================
+// 此檔案包含 RepostLens 的所有功能：報告生成、批次處理、文檔創建
+// 依賴: 0_Common.js (Config, Utils, ApiClient, SheetHelper)
+// ============================================================
+
+// ============================================================
+// RepostLensConfig - 模組專用配置
+// ============================================================
+var RepostLensConfig = (function () {
+    'use strict';
+
+    return {
+        TARGET_SHEET_NAME: 'Best',
+        MAX_ANALYSIS_CHARS: 16000,
+        MAX_RANK_ROWS: 18,
+        MAX_PREV_ROWS: 10,
+        MAX_ZERO_ROWS: 10,
+        MAX_COVERAGE_ROWS: 12,
+        MAX_EXPLORER_LIST: 8,
+        MAX_EXPLORER_TABLE_CHARS: 2500,
+        MAX_ANALYZE_CELL: 45000
+    };
+})();
+
+// ============================================================
+// ReportService - 報告生成核心業務邏輯
+// ============================================================
+var ReportService = (function () {
+    'use strict';
+
+    /**
+     * 調用 search/by-url API
+     */
+    function searchByUrl(site, pageUrl) {
+        var endpoint = Config.API_ENDPOINTS.REPORT_API_BASE + Config.API_ENDPOINTS.SEARCH_BY_URL;
+        var payload = {
+            site: site,
+            page: String(pageUrl || '').replace(/\s+/g, '')
+        };
+
+        var response = ApiClient.post(endpoint, payload);
+        var json = response.json();
+
+        if (!json) {
+            throw new Error('search.by-url 返回無效數據');
+        }
+
+        return Array.isArray(json) && json.length ? json[0] : null;
+    }
+
+    /**
+     * 調用 optimize/analyze API
+     */
+    function analyzeOptimization(searchRow) {
+        var endpoint = Config.API_ENDPOINTS.REPORT_API_BASE + Config.API_ENDPOINTS.OPTIMIZE_ANALYZE;
+        var payload = {
+            page: searchRow.page,
+            bestQuery: searchRow.best_query,
+            bestQueryClicks: Utils.toNumberOrNull(searchRow.best_query_clicks),
+            bestQueryPosition: Utils.toNumberOrNull(searchRow.best_query_position),
+            prevBestQuery: searchRow.prev_best_query,
+            prevBestPosition: Utils.toNumberOrNull(searchRow.prev_best_position),
+            prevBestClicks: Utils.toNumberOrNull(searchRow.prev_best_clicks),
+            rank4: searchRow.rank_4,
+            rank5: searchRow.rank_5,
+            rank6: searchRow.rank_6,
+            rank7: searchRow.rank_7,
+            rank8: searchRow.rank_8,
+            rank9: searchRow.rank_9,
+            rank10: searchRow.rank_10
+        };
+
+        var response = ApiClient.post(endpoint, payload);
+        var json = response.json();
+
+        if (!json || json.success !== true) {
+            throw new Error('optimize.analyze 失敗');
+        }
+
+        return json;
+    }
+
+    /**
+     * 調用 context-vector API
+     */
+    function getContextVector(pageUrl, analysisText) {
+        var endpoint = Config.API_ENDPOINTS.REPORT_API_BASE + Config.API_ENDPOINTS.CONTEXT_VECTOR;
+        var payload = {
+            pageUrl: String(pageUrl || '').replace(/\s+/g, ''),
+            analysisText: analysisText
+        };
+
+        var response = ApiClient.post(endpoint, payload);
+        var json = response.json();
+
+        if (!json || json.success !== true) {
+            throw new Error('context-vector 失敗');
+        }
+
+        return {
+            suggestions: Array.isArray(json.suggestions) ? json.suggestions : [],
+            markdown: Utils.sanitizeMultiline(json.markdown || '')
+        };
+    }
+
+    /**
+     * 調用 outline API
+     */
+    function getOutline(analysisText) {
+        var endpoint = Config.API_ENDPOINTS.REPORT_API_BASE + Config.API_ENDPOINTS.OUTLINE;
+        var payload = {
+            analyzeResult: String(analysisText || '')
+        };
+
+        var response = ApiClient.post(endpoint, payload);
+        var json = response.json();
+
+        if (!json || json.success !== true) {
+            throw new Error('outline 失敗');
+        }
+
+        return String(json.outline || '');
+    }
+
+    /**
+     * 批次調用 context-vector API
+     */
+    function getContextVectorBatch(items) {
+        var endpoint = Config.API_ENDPOINTS.REPORT_API_BASE + Config.API_ENDPOINTS.CONTEXT_VECTOR_BATCH;
+        var payload = { items: items };
+
+        var response = ApiClient.post(endpoint, payload);
+        var json = response.json();
+
+        if (!json || json.success !== true) {
+            throw new Error('context-vector-batch 失敗');
+        }
+
+        return json.results || [];
+    }
+
+    /**
+     * 批次調用 outline API
+     */
+    function getOutlineBatch(items) {
+        var endpoint = Config.API_ENDPOINTS.REPORT_API_BASE + Config.API_ENDPOINTS.OUTLINE_BATCH;
+        var payload = { items: items };
+
+        var response = ApiClient.post(endpoint, payload);
+        var json = response.json();
+
+        if (!json || json.success !== true) {
+            throw new Error('outline-batch 失敗');
+        }
+
+        return json.results || [];
+    }
+
+    return {
+        searchByUrl: searchByUrl,
+        analyzeOptimization: analyzeOptimization,
+        getContextVector: getContextVector,
+        getOutline: getOutline,
+        getContextVectorBatch: getContextVectorBatch,
+        getOutlineBatch: getOutlineBatch
+    };
+})();
+
+// ============================================================
+// DocumentService - Google Doc 文檔操作
+// ============================================================
+var DocumentService = (function () {
+    'use strict';
+
+    /**
+     * 創建或更新 Google Doc
+     */
+    function upsertDocument(docCell, docName, sections) {
+        // 檢查是否已存在文檔
+        var existingUrl = docCell.getValue();
+        var docId = extractDocId(existingUrl);
+        var doc;
+
+        if (docId) {
+            try {
+                doc = DocumentApp.openById(docId);
+                Utils.log('[DocumentService] 更新現有文檔: ' + docId);
+            } catch (e) {
+                Utils.log('[DocumentService] 無法開啟現有文檔，將創建新文檔');
+                doc = null;
+            }
+        }
+
+        // 如果沒有現有文檔，創建新的
+        if (!doc) {
+            doc = DocumentApp.create(docName);
+            Utils.log('[DocumentService] 創建新文檔: ' + doc.getId());
+        } else {
+            doc.setName(docName);
+        }
+
+        // 清空並重新寫入內容
+        var body = doc.getBody();
+        body.clear();
+
+        writeSectionsToBody(body, sections);
+
+        doc.saveAndClose();
+        return doc.getUrl();
+    }
+
+    /**
+     * 從 URL 提取 Doc ID
+     */
+    function extractDocId(url) {
+        if (!url) return '';
+        var match = String(url).match(/(?:\/d\/|id=)([A-Za-z0-9_-]{10,})/);
+        return match ? match[1] : '';
+    }
+
+    /**
+     * 將內容段落寫入 Doc body
+     */
+    function writeSectionsToBody(body, sections) {
+        // 標題
+        var title = body.appendParagraph(sections.heroPage || 'RepostLens 報告');
+        title.setHeading(DocumentApp.ParagraphHeading.HEADING1);
+
+        // 頁面 URL
+        if (sections.heroPageUrl) {
+            body.appendParagraph('頁面: ' + sections.heroPageUrl);
+        }
+
+        // 關鍵字
+        if (sections.heroKeyword) {
+            body.appendParagraph('主要關鍵字: ' + sections.heroKeyword);
+        }
+
+        body.appendHorizontalRule();
+
+        // 關鍵字摘要表格
+        if (sections.keywordSummaryTable && sections.keywordSummaryTable.rows) {
+            var heading1 = body.appendParagraph(sections.keywordSummaryTable.title || 'Keyword Summary');
+            heading1.setHeading(DocumentApp.ParagraphHeading.HEADING2);
+
+            var table1 = body.appendTable(sections.keywordSummaryTable.rows);
+            table1.setBorderWidth(1);
+        }
+
+        // 覆蓋率表格
+        if (sections.coverageTable && sections.coverageTable.rows) {
+            var heading2 = body.appendParagraph(sections.coverageTable.title || 'Keyword Data');
+            heading2.setHeading(DocumentApp.ParagraphHeading.HEADING2);
+
+            var table2 = body.appendTable([sections.coverageTable.headers].concat(sections.coverageTable.rows));
+            table2.setBorderWidth(1);
+        }
+
+        // 調整建議表格
+        if (sections.adjustmentsTable && sections.adjustmentsTable.rows) {
+            var heading3 = body.appendParagraph(sections.adjustmentsTable.title || 'Content Adjustments');
+            heading3.setHeading(DocumentApp.ParagraphHeading.HEADING2);
+
+            var table3 = body.appendTable([sections.adjustmentsTable.headers].concat(sections.adjustmentsTable.rows));
+            table3.setBorderWidth(1);
+        }
+
+        // 大綱
+        if (sections.outlineEntries && sections.outlineEntries.length > 0) {
+            var heading4 = body.appendParagraph('Content Outline');
+            heading4.setHeading(DocumentApp.ParagraphHeading.HEADING2);
+
+            for (var i = 0; i < sections.outlineEntries.length; i++) {
+                body.appendListItem(sections.outlineEntries[i]);
+            }
+        }
+    }
+
+    /**
+     * 刪除文檔（從 cell 中的 URL）
+     */
+    function deleteDocument(docCell) {
+        var url = docCell.getValue();
+        var docId = extractDocId(url);
+
+        if (docId) {
+            try {
+                DriveApp.getFileById(docId).setTrashed(true);
+                Utils.log('[DocumentService] 已刪除文檔: ' + docId);
+            } catch (e) {
+                Utils.log('[DocumentService] 刪除文檔失敗: ' + e.message);
+            }
+        }
+    }
+
+    return {
+        upsertDocument: upsertDocument,
+        extractDocId: extractDocId,
+        writeSectionsToBody: writeSectionsToBody,
+        deleteDocument: deleteDocument
+    };
+})();
+
+// ============================================================
+// DataProcessor - 數據處理與格式化
+// ============================================================
+var DataProcessor = (function () {
+    'use strict';
+
+    /**
+     * 準備文檔段落（整合所有數據）
+     */
+    function prepareDocSections(pageUrl, searchRow, outline, analyzeData, contextResult) {
+        return {
+            heroPage: Utils.decodeURISafe(pageUrl),
+            heroPageUrl: String(pageUrl || ''),
+            heroKeyword: searchRow && searchRow.best_query ? searchRow.best_query : '',
+            keywordSummaryTable: buildKeywordSummaryTable(searchRow, analyzeData),
+            coverageTable: buildCoverageTable(analyzeData),
+            adjustmentsTable: buildAdjustmentsTable(contextResult),
+            outlineEntries: parseOutlineEntries(outline)
+        };
+    }
+
+    /**
+     * 建立關鍵字摘要表格
+     */
+    function buildKeywordSummaryTable(searchRow, analyzeData) {
+        var mainKeywords = [];
+        var relatedKeywords = [];
+
+        if (searchRow && searchRow.best_query) {
+            pushUnique(mainKeywords, searchRow.best_query);
+        }
+
+        // 從 analyzeData 提取關鍵字
+        if (analyzeData && analyzeData.topRankKeywords) {
+            for (var i = 0; i < analyzeData.topRankKeywords.length; i++) {
+                pushUnique(mainKeywords, analyzeData.topRankKeywords[i].keyword);
+            }
+        }
+
+        if (analyzeData && analyzeData.rankKeywords) {
+            for (var i = 0; i < analyzeData.rankKeywords.length; i++) {
+                pushUnique(relatedKeywords, analyzeData.rankKeywords[i].keyword);
+            }
+        }
+
+        return {
+            title: 'Keyword Summary',
+            rows: [
+                ['頁面主要關鍵字', mainKeywords.join(', ') || '—'],
+                ['相關關鍵字', relatedKeywords.join(', ') || '—']
+            ]
+        };
+    }
+
+    function pushUnique(list, value) {
+        var text = Utils.sanitizeString(value);
+        if (!text) return;
+
+        var lower = text.toLowerCase();
+        for (var i = 0; i < list.length; i++) {
+            if (list[i].toLowerCase() === lower) return;
+        }
+        list.push(text);
+    }
+
+    /**
+     * 建立覆蓋率表格
+     */
+    function buildCoverageTable(analyzeData) {
+        if (!analyzeData || !analyzeData.keywordCoverage) return null;
+
+        var rows = [];
+        var covered = analyzeData.keywordCoverage.covered || [];
+
+        for (var i = 0; i < covered.length; i++) {
+            var row = covered[i];
+            rows.push([
+                row.text,
+                Utils.formatNumber(row.searchVolume),
+                Utils.formatNumber(row.gsc && row.gsc.clicks),
+                Utils.formatNumber(row.gsc && row.gsc.impressions),
+                Utils.formatNumber(row.gsc && row.gsc.avgPosition, 1),
+                ''
+            ]);
+        }
+
+        if (rows.length === 0) return null;
+
+        return {
+            title: 'Keyword Data Notes',
+            headers: ['Keyword', 'Search Volume', 'Clicks', 'Impressions', 'Avg Position', 'Note'],
+            rows: rows
+        };
+    }
+
+    /**
+     * 建立調整建議表格
+     */
+    function buildAdjustmentsTable(contextResult) {
+        var suggestions = contextResult && contextResult.suggestions ? contextResult.suggestions : [];
+        if (suggestions.length === 0) return null;
+
+        var rows = [];
+        for (var i = 0; i < suggestions.length; i++) {
+            var item = suggestions[i];
+            var before = Utils.sanitizeString(item.before);
+            var why = Utils.sanitizeString(item.whyProblemNow);
+            var after = Utils.sanitizeMultiline(item.afterAdjust || item.adjustAsFollows || '');
+
+            if (!before) continue;
+
+            var suggestion = [why, after].filter(function (s) { return s; }).join('\n\n');
+            rows.push([before, suggestion]);
+        }
+
+        if (rows.length === 0) return null;
+
+        return {
+            title: 'Content Adjustments',
+            headers: ['原文片段', '修改建議'],
+            rows: rows
+        };
+    }
+
+    /**
+     * 解析 outline 為條目列表
+     */
+    function parseOutlineEntries(outline) {
+        if (!outline) return [];
+
+        var lines = String(outline).split('\n');
+        var entries = [];
+
+        for (var i = 0; i < lines.length; i++) {
+            var line = lines[i].trim();
+            if (line) {
+                entries.push(line);
+            }
+        }
+
+        return entries;
+    }
+
+    /**
+     * 建立調整預覽文字（用於 Sheet cell）
+     */
+    function buildAdjustmentsPreviewText(adjustmentsTable) {
+        if (!adjustmentsTable || !adjustmentsTable.rows) return '';
+
+        var previews = [];
+        for (var i = 0; i < Math.min(3, adjustmentsTable.rows.length); i++) {
+            previews.push((i + 1) + '. ' + adjustmentsTable.rows[i][0].substring(0, 50) + '...');
+        }
+
+        return previews.join('\n');
+    }
+
+    return {
+        prepareDocSections: prepareDocSections,
+        buildAdjustmentsPreviewText: buildAdjustmentsPreviewText
+    };
+})();
+
+// ============================================================
+// RepostLensController - 主控制器（UI 入口）
+// ============================================================
+var RepostLensController = (function () {
+    'use strict';
+
+    /**
+     * 獲取目標 Sheet
+     */
+    function getTargetSheet() {
+        var sheetName = RepostLensConfig.TARGET_SHEET_NAME;
+
+        if (!sheetName) {
+            SheetHelper.showAlert('請先設定 TARGET_SHEET_NAME');
+            return null;
+        }
+
+        try {
+            return SheetHelper.getSheetByName(sheetName);
+        } catch (e) {
+            SheetHelper.showAlert('找不到分頁: ' + sheetName);
+            return null;
+        }
+    }
+
+    /**
+     * 處理單列
+     */
+    function processRow(sheet, rowNumber) {
+        Utils.log('[processRow] 處理第 ' + rowNumber + ' 列');
+
+        var colIndex = Config.COLUMN_INDEX;
+        var urlCell = sheet.getRange(rowNumber, colIndex.URL);
+        var contextCell = sheet.getRange(rowNumber, colIndex.CONTEXT_VECTOR);
+        var analysisCell = sheet.getRange(rowNumber, colIndex.ANALYSIS);
+        var docBodyCell = sheet.getRange(rowNumber, colIndex.DOC_BODY);
+        var docLinkCell = sheet.getRange(rowNumber, colIndex.DOC_LINK);
+
+        // 檢查是否已處理
+        if (docBodyCell.getValue()) {
+            Utils.log('[processRow] 跳過第 ' + rowNumber + ' 列，已處理');
+            return;
+        }
+
+        var rawUrl = String(urlCell.getValue() || '').trim();
+        var normalizedUrl = Utils.normalizeUrl(rawUrl);
+
+        if (!Utils.isValidUrl(normalizedUrl)) {
+            contextCell.setValue('SKIP: 非有效網址');
+            return;
+        }
+
+        urlCell.setValue(normalizedUrl);
+
+        try {
+            var host = Utils.parseHostname(normalizedUrl);
+            if (!host) throw new Error('URL 缺少 host');
+
+            var site = 'sc-domain:' + host.replace(/^www\./, '');
+            var searchRow = ReportService.searchByUrl(site, normalizedUrl);
+
+            if (!searchRow) {
+                contextCell.setValue('SKIP: search.by-url 無資料');
+                return;
+            }
+
+            // 獲取或生成分析
+            var analyzeData = Utils.safeJsonParse(analysisCell.getValue());
+            var analysisText = analyzeData && analyzeData.analysis ? analyzeData.analysis : '';
+
+            if (!analysisText) {
+                var freshAnalysis = ReportService.analyzeOptimization(searchRow);
+                analysisText = freshAnalysis.analysis || '';
+                analysisCell.setValue(JSON.stringify(freshAnalysis));
+            }
+
+            if (!analysisText) {
+                contextCell.setValue('SKIP: 無分析內容');
+                return;
+            }
+
+            // 獲取 context vector 和 outline
+            var contextResult = ReportService.getContextVector(normalizedUrl, analysisText);
+            var outline = ReportService.getOutline(analysisText);
+
+            // 準備文檔段落
+            var sections = DataProcessor.prepareDocSections(
+                normalizedUrl,
+                searchRow,
+                outline,
+                analyzeData,
+                contextResult
+            );
+
+            // 寫入預覽
+            var contextText = DataProcessor.buildAdjustmentsPreviewText(sections.adjustmentsTable);
+            contextCell.setValue(contextText);
+            docBodyCell.setValue('查看完整報告請點擊右側連結');
+
+            // 創建文檔
+            var docName = 'RepostLens Draft - ' + (searchRow.best_query || host);
+            var docUrl = DocumentService.upsertDocument(docLinkCell, docName, sections);
+            docLinkCell.setValue(docUrl);
+
+        } catch (err) {
+            var message = err && err.message ? err.message : String(err);
+            Utils.log('[processRow] 錯誤 row=' + rowNumber + ' ' + message);
+            docBodyCell.setValue('ERROR: ' + message);
+        }
+    }
+
+    /**
+     * 處理整個 Sheet
+     */
+    function runForSheet() {
+        var sheet = getTargetSheet();
+        if (!sheet) return;
+
+        var lastRow = sheet.getLastRow();
+        if (lastRow < 2) {
+            SheetHelper.showAlert('Sheet 沒有資料列');
+            return;
+        }
+
+        SheetHelper.showToast('開始處理 ' + (lastRow - 1) + ' 列', 'RepostLens', 3);
+
+        for (var row = 2; row <= lastRow; row++) {
+            processRow(sheet, row);
+
+            if (row < lastRow) {
+                Utils.sleep(600);
+            }
+        }
+
+        SheetHelper.showToast('處理完成', 'RepostLens', 5);
+    }
+
+    /**
+     * 處理當前活動列
+     */
+    function runForActiveRow() {
+        var sheet = getTargetSheet();
+        if (!sheet) return;
+
+        var activeSheet = SheetHelper.getActiveSheet();
+        if (activeSheet.getName() !== sheet.getName()) {
+            SheetHelper.showAlert('請切換到 ' + RepostLensConfig.TARGET_SHEET_NAME + ' 分頁');
+            return;
+        }
+
+        var activeCell = activeSheet.getActiveCell();
+        var row = activeCell.getRow();
+
+        if (row < 2) {
+            SheetHelper.showAlert('請選擇第2列以後的資料列');
+            return;
+        }
+
+        processRow(sheet, row);
+        SheetHelper.showToast('處理完成', 'RepostLens', 3);
+    }
+
+    return {
+        runForSheet: runForSheet,
+        runForActiveRow: runForActiveRow
+    };
+})();
+
+// ============================================================
+// 向後兼容的全局函數（供菜單調用）
+// ============================================================
+function runForSheet() {
+    return RepostLensController.runForSheet();
+}
+
+function runForActiveRow() {
+    return RepostLensController.runForActiveRow();
+}
+
+// ============================================================
+// 模組載入完成
+// ============================================================
+Utils.log('1_RepostLens.js 已載入 - RepostLens功能可用');

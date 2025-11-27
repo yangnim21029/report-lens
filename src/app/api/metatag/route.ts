@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { getVertexTextModel } from "~/server/vertex/client";
 import { fetchKeywordCoverage, type CoverageItem } from "~/utils/keyword-coverage";
+
+export const runtime = "nodejs";
 import { collectAllCurrentRows, normalizeKeyword } from "~/components/data-card-helpers";
 
 type KeywordMetric = {

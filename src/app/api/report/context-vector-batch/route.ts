@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
+import type { NextRequest } from "next/server";
 import { z } from "zod";
 import { getVertexTextModel } from "~/server/vertex/client";
+
+export const runtime = "nodejs";
 
 const ContextVectorSuggestionSchema = z.object({
   before: z.string().min(20),
@@ -37,7 +40,7 @@ export async function POST(req: Request) {
     };
 
     const items = Array.isArray(body?.items) ? body.items : [];
-    
+
     if (items.length === 0) {
       return NextResponse.json({ success: false, error: "No items provided" }, { status: 400 });
     }
@@ -142,19 +145,19 @@ async function processItem(item: BatchItem) {
     );
   }
 
-    const prompt = buildContextVectorPrompt(String(analysisText || ""), articlePlain);
+  const prompt = buildContextVectorPrompt(String(analysisText || ""), articlePlain);
 
-    const model = getVertexTextModel();
-    const resp = await model.generateContent(prompt);
-    const text = extractTextFromVertex(resp);
+  const model = getVertexTextModel();
+  const resp = await model.generateContent(prompt);
+  const text = extractTextFromVertex(resp);
 
-    let parsed: z.infer<typeof ContextVectorResponseSchema> | null = null;
-    try {
-      parsed = ContextVectorResponseSchema.parse(JSON.parse(text));
-    } catch (err) {
-      console.warn("[context-vector-batch] parse fallback error", err);
-      parsed = { suggestions: [] };
-    }
+  let parsed: z.infer<typeof ContextVectorResponseSchema> | null = null;
+  try {
+    parsed = ContextVectorResponseSchema.parse(JSON.parse(text));
+  } catch (err) {
+    console.warn("[context-vector-batch] parse fallback error", err);
+    parsed = { suggestions: [] };
+  }
   const suggestions = (parsed?.suggestions ?? []).map(normalizeSuggestion);
   const markdown = buildMarkdownTable(suggestions);
 

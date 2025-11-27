@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { getVertexTextModel } from "~/server/vertex/client";
 
+export const runtime = "nodejs";
+
 export async function POST(req: Request) {
   try {
     const body = await req.json();

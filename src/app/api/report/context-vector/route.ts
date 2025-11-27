@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
+import type { NextRequest } from "next/server";
 import { z } from "zod";
 import { getVertexTextModel } from "~/server/vertex/client";
+
+export const runtime = "nodejs";
 
 const ContextVectorSuggestionSchema = z.object({
   before: z.string().min(20),
