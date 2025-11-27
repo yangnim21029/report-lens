@@ -1,22 +1,49 @@
 import { NextResponse } from "next/server";
-import type { NextRequest } from "next/server";
-import { z } from "zod";
 import { getVertexTextModel } from "~/server/vertex/client";
+import { SchemaType } from "@google-cloud/vertexai";
+import { buildContextVectorPrompt } from "./prompt";
 
 export const runtime = "nodejs";
 
-const ContextVectorSuggestionSchema = z.object({
-  before: z.string().min(20),
-  whyProblemNow: z.string().min(1).max(80),
-  adjustAsFollows: z.string().min(1),
-  afterAdjust: z.union([z.string().min(20), z.null()]).optional().default(null),
-});
+export type ContextVectorSuggestion = {
+  before: string;
+  whyProblemNow: string;
+  adjustAsFollows: string;
+  afterAdjust?: string | null;
+};
 
-const ContextVectorResponseSchema = z.object({
-  suggestions: z.array(ContextVectorSuggestionSchema),
-});
-
-export type ContextVectorSuggestion = z.infer<typeof ContextVectorSuggestionSchema>;
+const contextVectorResponseSchema = {
+  type: SchemaType.OBJECT,
+  properties: {
+    suggestions: {
+      type: SchemaType.ARRAY,
+      items: {
+        type: SchemaType.OBJECT,
+        properties: {
+          before: {
+            type: SchemaType.STRING,
+            description: "Exact unique string from the Article Content (at least 10 chars)",
+          },
+          whyProblemNow: {
+            type: SchemaType.STRING,
+            description: "Brief explanation why this spot needs content (max 80 chars)",
+          },
+          adjustAsFollows: {
+            type: SchemaType.STRING,
+            description: "Instruction on what to add",
+          },
+          afterAdjust: {
+            type: SchemaType.STRING,
+            description: "The complete new paragraph to insert",
+            nullable: true,
+          },
+        },
+        required: ["before", "whyProblemNow", "adjustAsFollows"],
+      },
+    },
+  },
+  required: ["suggestions"],
+};
 
 export async function POST(req: Request) {
   try {
@@ -108,17 +135,18 @@ export async function POST(req: Request) {
     const prompt = buildContextVectorPrompt(String(analysisText || ""), articlePlain);
 
     const model = getVertexTextModel();
-    const resp = await model.generateContent(prompt);
+
+    const resp = await model.generateContent({
+      contents: [{ role: "user", parts: [{ text: prompt }] }],
+      generationConfig: {
+        responseMimeType: "application/json",
+        responseSchema: contextVectorResponseSchema,
+      },
+    });
+
     const text = extractTextFromVertex(resp);
 
-    let parsed: z.infer<typeof ContextVectorResponseSchema> | null = null;
-    try {
-      parsed = ContextVectorResponseSchema.parse(JSON.parse(text));
-    } catch (err) {
-      console.warn("[context-vector] parse fallback error", err);
-      parsed = { suggestions: [] };
-    }
-    const suggestions = (parsed?.suggestions ?? []).map(normalizeSuggestion);
+    const suggestions = parseContextVectorResponse(text).map(normalizeSuggestion);
     const markdown = buildMarkdownTable(suggestions);
 
     return NextResponse.json({ success: true, suggestions, markdown }, { status: 200 });
@@ -168,64 +196,6 @@ function toPlainText(html: string) {
     .replace(/&gt;/g, ">");
 }
 
-export function buildContextVectorPrompt(analysisText: string, articleText: string) {
-  return `Developer: ## 角色與目標
-你是一位資深 SEO onPage 優化專家，根據提供的分析內容與原文片段，找出最多三項關鍵內容缺口，你將專注在新增段落，並尋找置入位置。
-你將提供一整段完整描述，置入文章中任一指定的段落，而非單點的內容改善
-
-內容須有條理、可讀性高、並為讀者提供實際價值。
-根據主題不同，可偏向資訊型、說服型或娛樂型。
-
-Begin with a concise checklist (3-7 bullets) outlining分析輸入、識別內容缺口、逐項建議調整、按影響度排序、格式化為結構化 JSON 輸出等主要步驟。
-
-## 必須輸出的 JSON 結構
-{
-  "suggestions": [
-    {
-      "before": "原文片段，至少 20 字",
-      "whyProblemNow": "40 字以內的 SEO 問題說明，要淺顯易懂，只專注在內容薄弱上",
-      "adjustAsFollows": "說明調整方向／操作重點",
-      "afterAdjust": "完整可置入的新段落，至少 20 字，記得換行用 \n，示範要完整"
-    },
-    ...(最多 3 筆)
-  ]
-}
-若無調整，回傳 {"suggestions": []}。
-
-## 注意
-快速總覽清單已經由代碼自動生成，不需要撰寫快速清單
-補足弱項內容是重點
-
-## 輸入資料說明
-- 參考分析（Markdown）：${analysisText || ""}
-- 原文文章片段（純文字，已截斷 8000 字）：${articleText || ""}
-
-## 輸出守則
-- 僅填上述欄位，所有字串使用繁體中文，必要換行以 \n 表示。
-- 語氣要像台灣編輯和讀者自然聊天，避免學術、AI 式寫法與模板句（例如「總結來說」、「此篇文章」、「基於上述」等）。
-- whyProblemNow 限 40 字以內，請直接點出「哪裡薄弱、為何現在該補」，用生活化、淺白的詞彙。
-- afterAdjust 至少 20 字且必須為可直接放入文章的完整段落，語句自然流暢，可帶入受眾日常情境或感受，避免機械列點或過度制式開頭。
-- adjustAsFollows 聚焦在操作重點與內容要補什麼，用務實口吻說明，避免空泛的大道理或 AI 式的自我檢查語。
-- 禁止加入 Markdown 表格或 HTML、禁止修改 meta、TOC、快速檢視區塊。
-- 建議依 SEO 影響度排序，較嚴重者優先。
-- 用字簡潔清晰，字詞概念不重複，高中生程度以下的閱讀難度。
-- 只提供置入段落建議，需要確認現有段落不足之處，以提供建議。
-- 若有多個重複段落，可用某一段落作為修改示範，優先度較低。
-
-After each suggestion list is built, quickly 驗證其結構、內容完整度與各欄位長度是否符合規則，若不符則自動修正或剔除不合格項目再輸出。
-
-## Output 格式
-- 回傳一個 JSON 物件，包括 "suggestions" 陣列，陣列內每一筆建議物件最多 3 筆（0～3 筆，若無調整則為空陣列）。
-- 每筆建議物件需包含：
-  - "before"(string)：對應原文片段，必須至少 20 字。
-  - "whyProblemNow"(string)：摘要現有 SEO 問題，最多 40 字。
-  - "adjustAsFollows"(string)：簡述調整方向或重點。
-  - "afterAdjust"(string)：缺少的內容段落，必須至少 20 字，內容至少要回應意圖，並可直接放入原文且無語法錯誤。
-- 當 analysisText 或 articleText 任一輸入為空，視同無可調整，回傳 {"suggestions": []}。
-- 若內容長度未達最低要求（before/afterAdjust 至少 20 字），可略過該片段，不產生對應建議，亦不需報錯。
-`;
-}
-
 function extractTextFromVertex(
   resp: Awaited<ReturnType<ReturnType<typeof getVertexTextModel>["generateContent"]>>
 ) {
@@ -234,6 +204,33 @@ function extractTextFromVertex(
     .map((p) => (typeof p.text === "string" ? p.text : ""))
     .join("")
     .trim();
+}
+
+function parseContextVectorResponse(text: string): ContextVectorSuggestion[] {
+  if (!text) return [];
+  try {
+    const parsed = JSON.parse(text) as { suggestions?: unknown };
+    const rawSuggestions = Array.isArray(parsed?.suggestions)
+      ? (parsed.suggestions as unknown[]).slice(0, 3)
+      : [];
+    return rawSuggestions
+      .map((s) => {
+        const before = typeof (s as any)?.before === "string" ? (s as any).before : "";
+        const whyProblemNow =
+          typeof (s as any)?.whyProblemNow === "string" ? (s as any).whyProblemNow : "";
+        const adjustAsFollows =
+          typeof (s as any)?.adjustAsFollows === "string" ? (s as any).adjustAsFollows : "";
+        const afterAdjustRaw = (s as any)?.afterAdjust;
+        const afterAdjust =
+          typeof afterAdjustRaw === "string" ? afterAdjustRaw : afterAdjustRaw === null ? "" : null;
+        return { before, whyProblemNow, adjustAsFollows, afterAdjust };
+      })
+      .filter((item) => item.before && item.whyProblemNow && item.adjustAsFollows);
+  } catch (err) {
+    console.warn("[context-vector] parse error", err);
+    console.warn("[context-vector] response text:", text);
+    return [];
+  }
 }
 
 function normalizeSuggestion(s: ContextVectorSuggestion) {

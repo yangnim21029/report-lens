@@ -1,12 +1,20 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { TaskPanel, type FlowStep, type StepStatus } from "../components/TaskPanel";
 
 type Endpoint = {
   title: string;
   path: string;
   description: string;
   sample: string;
+};
+
+type ContextSuggestion = {
+  before?: string;
+  whyProblemNow?: string;
+  adjustAsFollows?: string;
+  afterAdjust?: string | null;
 };
 
 const DEFAULT_SITE = "sc-domain:holidaysmart.io";
@@ -76,7 +84,133 @@ function pretty(obj: unknown) {
   }
 }
 
+function deriveSiteFromUrl(url: string) {
+  try {
+    const u = new URL(url);
+    return `sc-domain:${u.hostname.replace(/^www\./i, "")}`;
+  } catch {
+    return DEFAULT_SITE;
+  }
+}
+
+function MindMapFlow({
+  steps,
+  onSelect,
+  containerRef,
+}: {
+  steps: FlowStep[];
+  onSelect: (step: FlowStep, target: HTMLElement) => void;
+  containerRef?: RefObject<HTMLDivElement | null>;
+}) {
+  const height = 340;
+  const baseY = height / 2;
+  const amplitude = 80;
+  const spacing = 260;
+  const nodeWidth = 240;
+  const nodeHeight = 100;
+  const nodes = steps.map((step, idx) => {
+    const x = 120 + idx * spacing;
+    const y = baseY + (idx % 2 === 0 ? -amplitude : amplitude);
+    return { ...step, x, y };
+  });
+
+  const paths = nodes.slice(0, -1).map((node, idx) => {
+    const next = nodes[idx + 1]!;
+    const midX1 = node.x + spacing * 0.35;
+    const midX2 = next.x - spacing * 0.35;
+    const d = `M ${node.x} ${node.y} C ${midX1} ${node.y}, ${midX2} ${next.y}, ${next.x} ${next.y}`;
+    const isComplete = node.status === "done" && next.status !== "pending";
+    return { d, isComplete };
+  });
+
+  const statusStyles: Record<StepStatus, string> = {
+    done: "ring-2 ring-sky-500 shadow-lg shadow-sky-100 border-sky-200 bg-white scale-[1.02]",
+    active: "ring-2 ring-slate-300 border-slate-200 bg-white",
+    pending: "border-slate-200 bg-white/80 text-slate-500",
+  };
+
+  const totalWidth = 80 + (steps.length - 1) * spacing + nodeWidth + 40;
+
+  return (
+    <div
+      ref={containerRef}
+      className="relative w-full overflow-x-auto overflow-y-visible rounded-xl bg-white/70 px-4 py-6 ring-1 ring-slate-200"
+    >
+      <div className="relative" style={{ height, width: totalWidth }}>
+        <svg
+          width={totalWidth}
+          height={height}
+          viewBox={`0 0 ${totalWidth} ${height}`}
+          preserveAspectRatio="xMinYMid meet"
+          className="absolute inset-0"
+        >
+          {paths.map((p, i) => (
+            <path
+              key={`bg-${i}`}
+              d={p.d}
+              fill="none"
+              stroke="#dfe5ef"
+              strokeWidth={8}
+              strokeLinecap="round"
+            />
+          ))}
+          {paths.map((p, i) =>
+            p.isComplete ? (
+              <path
+                key={`fg-${i}`}
+                d={p.d}
+                fill="none"
+                stroke="url(#flowGradient)"
+                strokeWidth={8}
+                strokeLinecap="round"
+              />
+            ) : null,
+          )}
+          <defs>
+            <linearGradient id="flowGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+              <stop offset="0%" stopColor="#60a5fa" />
+              <stop offset="100%" stopColor="#22d3ee" />
+            </linearGradient>
+          </defs>
+        </svg>
+        <div className="relative" style={{ height, width: totalWidth }}>
+          {nodes.map((node, idx) => (
+            <div
+              key={node.id}
+              className={`absolute flex -translate-x-1/2 -translate-y-1/2 cursor-pointer items-center gap-3 rounded-2xl border px-4 py-3 transition-all duration-200 hover:shadow-lg ${statusStyles[node.status]}`}
+              style={{
+                left: node.x,
+                top: node.y,
+                minWidth: nodeWidth,
+                minHeight: nodeHeight,
+              }}
+              onClick={(e) => onSelect(node, e.currentTarget)}
+            >
+              <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-slate-50 text-xl text-slate-500">
+                <div className="h-6 w-6 rounded-full border border-slate-300" />
+              </div>
+              <div className="flex flex-col">
+                <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                  {node.subtitle}
+                </span>
+                <span className="text-base font-bold text-slate-900">{node.title}</span>
+              </div>
+              {idx === nodes.length - 1 && (
+                <span className="absolute right-[-6px] top-1/2 h-3 w-3 -translate-y-1/2 rounded-full bg-sky-500 shadow" />
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+
 export default function ApiDocsPage() {
+  const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
+  const flowContainerRef = useRef<HTMLDivElement>(null);
   const [baseUrl, setBaseUrl] = useState(DEFAULT_BASE_URL);
   const [site, setSite] = useState(DEFAULT_SITE);
   const [pageUrl, setPageUrl] = useState(DEFAULT_PAGE);
@@ -101,11 +235,91 @@ export default function ApiDocsPage() {
   const [analyzeLoading, setAnalyzeLoading] = useState(false);
   const [analyzeError, setAnalyzeError] = useState<string | null>(null);
 
+  const [contextLoading, setContextLoading] = useState(false);
+  const [contextMarkdown, setContextMarkdown] = useState<string | null>(null);
+  const [contextSuggestions, setContextSuggestions] = useState<ContextSuggestion[]>([]);
+  const [contextSearchRow, setContextSearchRow] = useState<any | null>(null);
+  const [contextAnalyzeResult, setContextAnalyzeResult] = useState<any | null>(null);
+  const [flowCurrent, setFlowCurrent] = useState<FlowStep["id"] | null>(null);
+  const [selectedStep, setSelectedStep] = useState<FlowStep | null>(null);
+
   useEffect(() => {
     if (typeof window !== "undefined") {
       setBaseUrl(window.location.origin);
     }
   }, []);
+
+  const runRepostLensFlow = async () => {
+    setContextLoading(true);
+    setContextMarkdown(null);
+    setContextSuggestions([]);
+    setContextSearchRow(null);
+    setContextAnalyzeResult(null);
+    setFlowCurrent("search");
+    try {
+      const siteFromUrl = deriveSiteFromUrl(pageUrl);
+      // Step 1: search/by-url
+      const searchRes = await fetch("/api/search/by-url", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ site: siteFromUrl, page: pageUrl, startDate, periodDays }),
+      });
+      const searchJson = await searchRes.json().catch(() => null);
+      if (!searchRes.ok) {
+        throw new Error(searchJson?.error || `Search failed: ${searchRes.status}`);
+      }
+      if (!Array.isArray(searchJson) || !searchJson.length) {
+        throw new Error("search/by-url 沒有回傳資料");
+      }
+      const pickedRow = searchJson[0];
+      setContextSearchRow(pickedRow);
+
+      // Step 2: optimize/analyze
+      setFlowCurrent("analyze");
+      const analyzePayload: Record<string, unknown> = {
+        page: pageUrl,
+        bestQuery: pickedRow.best_query,
+        bestQueryClicks: pickedRow.best_query_clicks,
+        bestQueryPosition: pickedRow.best_query_position,
+      };
+      const analyzeRes = await fetch("/api/optimize/analyze", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(analyzePayload),
+      });
+      const analyzeJson = await analyzeRes.json().catch(() => null);
+      if (!analyzeRes.ok || analyzeJson?.success === false) {
+        throw new Error(analyzeJson?.error || `Analyze failed: ${analyzeRes.status}`);
+      }
+      setContextAnalyzeResult(analyzeJson);
+      const analysisText =
+        typeof analyzeJson?.analysis === "string" && analyzeJson.analysis.trim()
+          ? analyzeJson.analysis
+          : "";
+
+      // Step 3: context-vector
+      setFlowCurrent("context");
+      const contextRes = await fetch("/api/report/context-vector", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          analysisText,
+          pageUrl,
+        }),
+      });
+      const contextJson = await contextRes.json().catch(() => null);
+      if (!contextRes.ok || contextJson?.success === false) {
+        throw new Error(contextJson?.error || `Context-vector failed: ${contextRes.status}`);
+      }
+      setContextMarkdown(typeof contextJson?.markdown === "string" ? contextJson.markdown : null);
+      setContextSuggestions(Array.isArray(contextJson?.suggestions) ? contextJson.suggestions : []);
+    } catch (err) {
+      // Swallow error; flow state will remain on the step that failed
+    } finally {
+      setContextLoading(false);
+      setFlowCurrent(null);
+    }
+  };
 
   const firstRow = useMemo(
     () => (Array.isArray(searchResult) && searchResult.length ? searchResult[0] : null),
@@ -113,6 +327,97 @@ export default function ApiDocsPage() {
   );
 
   const endpoints = useMemo(() => buildEndpoints(baseUrl), [baseUrl]);
+  const flowSteps = useMemo<FlowStep[]>(() => {
+    const hasSearch =
+      (Array.isArray(searchResult) && searchResult.length > 0) || !!contextSearchRow;
+    const hasAnalyze = !!analyzeResult || !!contextAnalyzeResult;
+    const hasContext = !!contextMarkdown || (contextSuggestions?.length ?? 0) > 0;
+    const tasks = {
+      start: [
+        { id: "prep", title: "確認網址", desc: "輸入並檢查 page URL 及站點。" },
+        { id: "ready", title: "載入預設", desc: "預設填入 holidaysmart 範例便於測試。" },
+      ],
+      search: [
+        { id: "call", title: "呼叫 /api/search/by-url", desc: "傳入 site + page + startDate/periodDays 取得 GSC 行為資料。" },
+        {
+          id: "parse",
+          title: "解析結果",
+          desc: "預設取回陣列第 1 筆（含 best_query、rank buckets、clicks/impressions），可改為手動挑選。",
+        },
+      ],
+      analyze: [
+        { id: "fetch", title: "抓取文章 HTML", desc: "以 UA=RepostLens 取得主文並轉純文本。" },
+        {
+          id: "build",
+          title: "組合分析 Prompt",
+          desc: "把 Rank1-10 + SV、前次排名快照、Coverage/Explorer/PAA 摘要一次丟進同一個 prompt，讓模型排序關鍵字優先度、挑薄弱區塊，並輸出 analysis（例如 Search Characteristic / Semantic Hijacking / Implementation Priority 的 Markdown 區塊），不含插入 anchor。",
+        },
+        { id: "call", title: "呼叫 /api/optimize/analyze", desc: "單次模型輸出 analysis 與零搜尋字檢查。" },
+      ],
+      context: [
+        {
+          id: "prompt",
+          title: "組合 Context Vector Prompt",
+          desc: "在這步要求輸出 schema：before=原文中 10+ 字且全文唯一的片段作 anchor（例如「屯門站至紅磡小巴 40X 時間表」）、whyProblemNow=為何補、adjustAsFollows=要補的訊息＋口吻/長度＋插在 before 後、afterAdjust=完成段落。這組欄位對應 context-vector API 的輸出格式，用 before 當定位點，其餘三欄給原因、指令與成品。",
+        },
+        { id: "call", title: "呼叫 /api/report/context-vector", desc: "Structured output 回傳 before/after 建議與 Markdown 表格。" },
+      ],
+    };
+    return [
+      { id: "start", title: "Start", subtitle: "準備", status: "done", tasks: tasks.start },
+      {
+        id: "search",
+        title: "Search by URL",
+        subtitle: hasSearch ? "完成" : "抓取頁面表現",
+        status: hasSearch ? "done" : flowCurrent === "search" ? "active" : "pending",
+        tasks: tasks.search,
+      },
+      {
+        id: "analyze",
+        title: "Optimize / Analyze",
+        subtitle: hasAnalyze ? "完成" : "語意分析",
+        status: hasAnalyze
+          ? "done"
+          : flowCurrent === "analyze"
+            ? "active"
+            : hasSearch
+              ? "active"
+              : "pending",
+        tasks: tasks.analyze,
+      },
+      {
+        id: "context",
+        title: "Context Vector",
+        subtitle: hasContext ? "完成" : "插段建議",
+        status: hasContext
+          ? "done"
+          : flowCurrent === "context"
+            ? "active"
+            : hasAnalyze
+              ? "active"
+              : "pending",
+        tasks: tasks.context,
+      },
+    ];
+  }, [
+    searchResult,
+    analyzeResult,
+    contextMarkdown,
+    contextSuggestions,
+    contextSearchRow,
+    contextAnalyzeResult,
+    flowCurrent,
+  ]);
+
+  // 自動選擇目前進行或最後完成的節點
+  useEffect(() => {
+    if (selectedStep) return;
+    const pick =
+      flowSteps.find((s) => s.status === "active") ||
+      [...flowSteps].reverse().find((s) => s.status === "done") ||
+      flowSteps[0];
+    if (pick) setSelectedStep(pick);
+  }, [flowSteps, selectedStep]);
 
   const handleSearch = async () => {
     setSearchLoading(true);
@@ -154,6 +459,27 @@ export default function ApiDocsPage() {
         bestQuery: firstRow.best_query,
         bestQueryClicks: firstRow.best_query_clicks,
         bestQueryPosition: firstRow.best_query_position,
+        rank1: firstRow.current_rank_1,
+        rank2: firstRow.current_rank_2,
+        rank3: firstRow.current_rank_3,
+        rank4: firstRow.current_rank_4,
+        rank5: firstRow.current_rank_5,
+        rank6: firstRow.current_rank_6,
+        rank7: firstRow.current_rank_7,
+        rank8: firstRow.current_rank_8,
+        rank9: firstRow.current_rank_9,
+        rank10: firstRow.current_rank_10,
+        prevRank1: firstRow.prev_rank_1,
+        prevRank2: firstRow.prev_rank_2,
+        prevRank3: firstRow.prev_rank_3,
+        prevRank4: firstRow.prev_rank_4,
+        prevRank5: firstRow.prev_rank_5,
+        prevRank6: firstRow.prev_rank_6,
+        prevRank7: firstRow.prev_rank_7,
+        prevRank8: firstRow.prev_rank_8,
+        prevRank9: firstRow.prev_rank_9,
+        prevRank10: firstRow.prev_rank_10,
+        prevRankGt10: firstRow.prev_rank_gt10,
       };
       const res = await fetch("/api/optimize/analyze", {
         method: "POST",
@@ -282,6 +608,38 @@ export default function ApiDocsPage() {
             直接用預設的 holidaysmart 範例測試 by-url 與 analyze。若要換頁面，可修改欄位後重跑。
           </p>
         </header>
+
+        <section className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-slate-50 via-white to-slate-100 p-6 shadow-sm ring-1 ring-slate-200">
+          <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h2 className="text-xl font-bold text-slate-900">語意分析 Flow（XMind 風格）</h2>
+              <p className="text-sm text-slate-600">
+                節點代表 API 步驟，採用 Zig-Zag S 型曲線串連。完成前一步後，導管顏色會向下一步流動。
+              </p>
+            </div>
+            <button
+              onClick={runRepostLensFlow}
+              disabled={contextLoading}
+              className="inline-flex items-center justify-center rounded-full bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {contextLoading ? "Running..." : "執行流程"}
+            </button>
+          </div>
+          <MindMapFlow
+            steps={flowSteps}
+            onSelect={(step, target) => {
+              setSelectedStep(step);
+              setAnchorEl(target);
+            }}
+            containerRef={flowContainerRef}
+          />
+          <TaskPanel
+            step={selectedStep}
+            anchorEl={anchorEl}
+            containerRef={flowContainerRef}
+            onClose={() => setAnchorEl(null)}
+          />
+        </section>
 
         <section className="rounded-xl bg-white p-6 shadow-sm ring-1 ring-slate-200 space-y-4">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-end">

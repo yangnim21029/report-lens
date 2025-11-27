@@ -3,6 +3,8 @@
 /* Design System: Data Editorial */
 @layer base {
 	:root {
+		/* Fallback font family (offline build friendly) */
+		--font-geist-sans: "Inter", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
 		/* Spatial Units */
 		--unit: 1vmin;
 		--golden: 1.618;

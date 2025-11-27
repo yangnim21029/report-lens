@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import type { NextRequest } from "next/server";
 import { convert } from "html-to-text";
+import { SchemaType } from "@google-cloud/vertexai";
 import { getVertexTextModel } from "~/server/vertex/client";
 
 export const runtime = "nodejs";
@@ -76,11 +76,12 @@ export async function POST(req: Request) {
     const keywordsArray = [input?.rank4, input?.rank5, input?.rank6, input?.rank7, input?.rank8, input?.rank9, input?.rank10]
       .filter(Boolean)
       .map((line: unknown) => String(line || ""));
-    let keywordLines = [...keywordsArray];
-    let keywordsList = keywordLines.join("\n");
-    let rankKeywordDetails = keywordLines.map((line) => parseRankKeywordLine(line));
+  let keywordLines = [...keywordsArray];
+  let keywordsList = keywordLines.join("\n");
+  let rankKeywordDetails = keywordLines.map((line) => parseRankKeywordLine(line));
+  let zeroSvKeywords: string[] = [];
 
-    const region = page.includes("holidaysmart.io") ? (page.match(/\/(hk|tw|sg|my|cn)\//i)?.[1]?.toLowerCase() || "hk") : "hk";
+  const region = page.includes("holidaysmart.io") ? (page.match(/\/(hk|tw|sg|my|cn)\//i)?.[1]?.toLowerCase() || "hk") : "hk";
     const locale = {
       hk: { language: "繁體中文（香港）", tone: "親切、地道、生活化" },
       tw: { language: "繁體中文（台灣）", tone: "溫馨、在地、貼心" },
@@ -127,11 +128,18 @@ export async function POST(req: Request) {
           zeroSearchVolume: zeroSv,
           searchVolumeMap: Object.fromEntries(Array.from(svMap.entries())),
         };
-        const enrichWithSV = (raw: string): string => {
-          const str = String(raw || "").trim();
-          const name = str.includes("(") ? str.slice(0, str.indexOf("(")).trim() : str;
-          const sv = svMap.get(norm(name));
-          const svPart = `SV: ${typeof sv === "number" && isFinite(sv) ? sv : "N/A"}`;
+        zeroSvKeywords = zeroSv
+          .map((item) => {
+            if (item?.text) return item.text;
+            const maybeKeyword = (item as unknown as { keyword?: unknown })?.keyword;
+            return typeof maybeKeyword === "string" ? maybeKeyword : "";
+          })
+          .filter(Boolean);
+    const enrichWithSV = (raw: string): string => {
+      const str = String(raw || "").trim();
+      const name = str.includes("(") ? str.slice(0, str.indexOf("(")).trim() : str;
+      const sv = svMap.get(norm(name));
+      const svPart = `SV: ${typeof sv === "number" && isFinite(sv) ? sv : "N/A"}`;
           if (str.includes("(")) {
             const inside = str.slice(str.indexOf("(") + 1, str.lastIndexOf(")") >= 0 ? str.lastIndexOf(")") : str.length).trim();
             const hasSV = /\bSV\s*:\s*/i.test(inside);
@@ -151,6 +159,12 @@ export async function POST(req: Request) {
           prevRankLines = prevRankLines.map((line: string) => enrichWithSV(String(line)));
           prevRankDetails = prevRankLines.map((line) => parseRankKeywordLine(line));
         }
+        zeroSvKeywords.push(
+          ...rankKeywordDetails.filter((item) => item.searchVolume === 0).map((i) => i.keyword),
+        );
+        zeroSvKeywords.push(
+          ...prevRankDetails.filter((item) => item.searchVolume === 0).map((i) => i.keyword),
+        );
       }
     } catch (_) {
       // ignore coverage enrichment failures to avoid blocking core analysis
@@ -458,24 +472,21 @@ ${coverageBlock}${contentExplorerBlock}`;
     });
     const analysis = extractTextFromVertex(resp) || "無法生成分析結果";
 
-    // Step 5: Build sections (light parsing)
-    const sections = splitSections(analysis);
     const keywordsAnalyzed = keywordsArray.length;
 
     return NextResponse.json({
       success: true,
       analysis,
-      sections,
       keywordsAnalyzed,
       topRankKeywords: highRankDetails,
       rankKeywords: rankKeywordDetails,
       previousRankKeywords: prevRankDetails,
-      zeroSearchVolumeKeywords: {
-        rank: rankKeywordDetails.filter((item) => item.searchVolume === 0),
-        coverage: coverageData?.zeroSearchVolume || [],
-      },
       contentExplorer: contentExplorerSummary,
       keywordCoverage: coverageData,
+      zeroSearchVolumeSuggestions: await buildZeroSearchVolumeSuggestions(
+        textContent,
+        Array.from(new Set(zeroSvKeywords.filter(Boolean))).slice(0, 15)
+      ),
       promptBlocks: {
         keywordCoverage: coverageBlock || null,
         contentExplorer: contentExplorerBlock || null,
@@ -523,20 +534,6 @@ function parseRankKeywordLine(line: string) {
   };
 }
 
-function splitSections(md: string) {
-  const get = (title: string) => {
-    const re = new RegExp(`## ${title}[\\s\\S]*?(?=\n## |$)`, "i");
-    const m = md.match(re);
-    return m ? m[0] : "";
-  };
-  return {
-    quickWins: get("Search Characteristic Analysis"),
-    paragraphAdditions: get("Core Hijacking Strategy"),
-    structuralChanges: get("Implementation Priority"),
-    rawAnalysis: md,
-  };
-}
-
 function extractTextFromVertex(
   resp: Awaited<ReturnType<ReturnType<typeof getVertexTextModel>["generateContent"]>>
 ) {
@@ -545,4 +542,61 @@ function extractTextFromVertex(
     .map((p) => (typeof p.text === "string" ? p.text : ""))
     .join("")
     .trim();
+}
+
+type ZeroSvSuggestion = {
+  keyword: string;
+  found: boolean;
+  evidence?: string;
+  suggestion?: string;
+};
+
+async function buildZeroSearchVolumeSuggestions(articleText: string, keywords: string[]) {
+  if (!keywords.length || !articleText) return [];
+
+  const prompt = `你是 SEO 編輯，任務是處理 0 搜尋量關鍵字，避免浪費篇幅。
+請閱讀文章摘要，檢查是否出現這些關鍵字：${keywords.join(", ")}。
+若有出現，指出包含該字的句子或片段，並給出「縮減/合併」建議（繁體中文，務實、簡短）。
+若沒出現，可略過該關鍵字。只回傳有找到的項目。
+
+文章摘要（截斷）：
+${articleText.slice(0, 2800)}`;
+
+  const schema = {
+    type: SchemaType.OBJECT,
+    properties: {
+      suggestions: {
+        type: SchemaType.ARRAY,
+        items: {
+          type: SchemaType.OBJECT,
+          properties: {
+            keyword: { type: SchemaType.STRING },
+            found: { type: SchemaType.BOOLEAN },
+            evidence: { type: SchemaType.STRING },
+            suggestion: { type: SchemaType.STRING },
+          },
+          required: ["keyword", "found"],
+        },
+      },
+    },
+    required: ["suggestions"],
+  };
+
+  try {
+    const model = getVertexTextModel();
+    const resp = await model.generateContent({
+      contents: [{ role: "user", parts: [{ text: prompt }] }],
+      generationConfig: {
+        responseMimeType: "application/json",
+        responseSchema: schema,
+      },
+    });
+    const text = extractTextFromVertex(resp);
+    const parsed = JSON.parse(text) as { suggestions?: unknown };
+    if (!Array.isArray(parsed?.suggestions)) return [];
+    return (parsed.suggestions as ZeroSvSuggestion[]).filter((s) => s && s.found);
+  } catch (err) {
+    console.warn("[optimize/analyze] zero SV suggestion error", err);
+    return [];
+  }
 }

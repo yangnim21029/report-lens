@@ -4,7 +4,7 @@ import { env } from "~/env";
 import { z } from "zod";
 import { convert } from "html-to-text";
 import { getVertexTextModel } from "~/server/vertex/client";
-import { buildContextVectorPrompt } from "../report/context-vector/route";
+import { buildContextVectorPrompt } from "../report/context-vector/prompt";
 
 export const runtime = "nodejs";
 import { fetchKeywordCoverage, buildCoveragePromptParts } from "~/utils/keyword-coverage";
