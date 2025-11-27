@@ -32,6 +32,13 @@ export async function POST(req: Request) {
     const providedText = typeof body?.articleText === "string" ? body.articleText.trim() : "";
     const providedHtml = typeof body?.articleHtml === "string" ? body.articleHtml : "";
 
+    if (!analysisText || !analysisText.trim()) {
+      return NextResponse.json(
+        { success: false, error: "Missing analysisText" },
+        { status: 400 },
+      );
+    }
+
     let articlePlain = providedText || (providedHtml ? toPlainText(providedHtml) : "");
     let captureError: unknown = null;
 
@@ -161,7 +168,7 @@ function toPlainText(html: string) {
     .replace(/&gt;/g, ">");
 }
 
-function buildContextVectorPrompt(analysisText: string, articleText: string) {
+export function buildContextVectorPrompt(analysisText: string, articleText: string) {
   return `Developer: ## 角色與目標
 你是一位資深 SEO onPage 優化專家，根據提供的分析內容與原文片段，找出最多三項關鍵內容缺口，你將專注在新增段落，並尋找置入位置。
 你將提供一整段完整描述，置入文章中任一指定的段落，而非單點的內容改善

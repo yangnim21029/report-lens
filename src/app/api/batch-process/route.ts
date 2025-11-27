@@ -4,6 +4,7 @@ import { env } from "~/env";
 import { z } from "zod";
 import { convert } from "html-to-text";
 import { getVertexTextModel } from "~/server/vertex/client";
+import { buildContextVectorPrompt } from "../report/context-vector/route";
 
 export const runtime = "nodejs";
 import { fetchKeywordCoverage, buildCoveragePromptParts } from "~/utils/keyword-coverage";
@@ -304,33 +305,6 @@ function toPlainText(html: string) {
     .replace(/&amp;/g, "&")
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">");
-}
-
-function buildContextVectorPrompt(analysisText: string, articleText: string) {
-  return `## 角色與目標
-你是一位資深 SEO onPage 優化專家，根據提供的分析內容與原文片段，找出最多三項關鍵內容缺口。
-
-## 必須輸出的 JSON 結構
-{
-  "suggestions": [
-    {
-      "before": "原文片段，至少 20 字",
-      "whyProblemNow": "40 字以內的 SEO 問題說明",
-      "adjustAsFollows": "說明調整方向／操作重點",
-      "afterAdjust": "完整可置入的新段落，至少 20 字"
-    }
-  ]
-}
-
-## 輸入資料
-- 參考分析：${analysisText || ""}
-- 原文文章片段：${articleText || ""}
-
-## 輸出守則
-- 僅填上述欄位，所有字串使用繁體中文
-- whyProblemNow 限 40 字以內；afterAdjust 至少 20 字
-- 建議依 SEO 影響度排序，最多 3 筆
-`;
 }
 
 function buildOutlinePrompt(analysisText: string) {

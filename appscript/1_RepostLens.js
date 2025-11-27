@@ -257,69 +257,149 @@ var DocumentService = (function () {
      * 將內容段落寫入 Doc body
      */
     function writeSectionsToBody(body, sections) {
-        // 標題
-        var title = body.appendParagraph(sections.heroPage || 'RepostLens 報告');
-        title.setHeading(DocumentApp.ParagraphHeading.HEADING1);
+        // === Hero block ===
+        var heroTitle = body.appendParagraph('SEO 優化報告');
+        heroTitle.setHeading(DocumentApp.ParagraphHeading.HEADING1);
+        heroTitle.editAsText().setFontSize(24).setBold(true).setForegroundColor('#2C3E50');
 
-        // 頁面 URL
-        if (sections.heroPageUrl) {
-            body.appendParagraph('頁面: ' + sections.heroPageUrl);
-        }
+        body.appendParagraph('');
 
-        // 關鍵字
+        var pageLabel = body.appendParagraph('頁面');
+        pageLabel.editAsText().setFontSize(11).setBold(true).setForegroundColor('#7F8C8D');
+
+        var pageValue = body.appendParagraph(sections.heroPage || '');
+        var pageText = pageValue.editAsText();
+        pageText.setFontSize(14).setForegroundColor('#2980B9').setUnderline(true);
+        pageText.setLinkUrl(sections.heroPageUrl || '');
+
+        body.appendParagraph('');
+
         if (sections.heroKeyword) {
-            body.appendParagraph('主要關鍵字: ' + sections.heroKeyword);
+            var keywordLabel = body.appendParagraph('核心關鍵字');
+            keywordLabel.editAsText().setFontSize(11).setBold(true).setForegroundColor('#7F8C8D');
+
+            var keywordValue = body.appendParagraph(sections.heroKeyword);
+            keywordValue.editAsText().setFontSize(16).setBold(true).setForegroundColor('#E74C3C');
         }
 
-        body.appendHorizontalRule();
+        // 換頁
+        body.appendPageBreak();
 
-        // 關鍵字摘要表格
+        // Keyword summary table
         if (sections.keywordSummaryTable && sections.keywordSummaryTable.rows) {
-            var heading1 = body.appendParagraph(sections.keywordSummaryTable.title || 'Keyword Summary');
-            heading1.setHeading(DocumentApp.ParagraphHeading.HEADING2);
-
-            var table1 = body.appendTable(sections.keywordSummaryTable.rows);
-            table1.setBorderWidth(1);
+            body.appendParagraph(sections.keywordSummaryTable.title || 'Keyword Summary')
+                .setHeading(DocumentApp.ParagraphHeading.HEADING2);
+            var summaryTable = body.appendTable(sections.keywordSummaryTable.rows);
+            summaryTable.setBorderWidth(1).setBorderColor('#CCCCCC');
+            for (var r = 0; r < summaryTable.getNumRows(); r++) {
+                var row = summaryTable.getRow(r);
+                row.getCell(0).setWidth(100).setBackgroundColor('#F3F3F3')
+                    .editAsText().setBold(true).setFontSize(10);
+                row.getCell(1).setWidth(300)
+                    .editAsText().setFontSize(10);
+                row.getCell(0).setPaddingTop(8).setPaddingBottom(8).setPaddingLeft(10).setPaddingRight(10);
+                row.getCell(1).setPaddingTop(8).setPaddingBottom(8).setPaddingLeft(10).setPaddingRight(10);
+            }
+            body.appendParagraph('');
         }
 
-        // 覆蓋率表格
-        if (sections.coverageTable && sections.coverageTable.rows) {
-            var heading2 = body.appendParagraph(sections.coverageTable.title || 'Keyword Data');
-            heading2.setHeading(DocumentApp.ParagraphHeading.HEADING2);
+        // Content adjustments table
+        if (sections.adjustmentsTable && sections.adjustmentsTable.rows) {
+            body.appendParagraph(sections.adjustmentsTable.title || 'Content Adjustments')
+                .setHeading(DocumentApp.ParagraphHeading.HEADING2);
+            var adjTableData = [sections.adjustmentsTable.headers].concat(sections.adjustmentsTable.rows);
+            var adjTable = body.appendTable(adjTableData);
+            adjTable.setBorderWidth(1).setBorderColor('#CCCCCC');
 
-            var table2 = body.appendTable([sections.coverageTable.headers].concat(sections.coverageTable.rows));
-            table2.setBorderWidth(1);
-        }
-
-        // 內部連結建議
-        if (sections.internalLinksTable && sections.internalLinksTable.rows) {
-            var headingLink = body.appendParagraph(sections.internalLinksTable.title || 'Internal Link Suggestions');
-            headingLink.setHeading(DocumentApp.ParagraphHeading.HEADING2);
-
-            if (sections.internalLinkTokens && sections.internalLinkTokens.length) {
-                body.appendParagraph('Tokenized Keywords: ' + sections.internalLinkTokens.join(', '));
+            var adjHeader = adjTable.getRow(0);
+            for (var hc = 0; hc < adjHeader.getNumCells(); hc++) {
+                var hcell = adjHeader.getCell(hc);
+                hcell.setBackgroundColor('#4A90E2')
+                    .editAsText().setBold(true).setFontSize(11).setForegroundColor('#FFFFFF');
+                hcell.setPaddingTop(10).setPaddingBottom(10).setPaddingLeft(12).setPaddingRight(12);
+                hcell.setWidth(hc === 0 ? 150 : 300);
             }
 
-            var tableLink = body.appendTable([sections.internalLinksTable.headers].concat(sections.internalLinksTable.rows));
-            tableLink.setBorderWidth(1);
+            for (var ar = 1; ar < adjTable.getNumRows(); ar++) {
+                var arow = adjTable.getRow(ar);
+                var bg = ar % 2 === 1 ? '#FFFFFF' : '#F9F9F9';
+                for (var ac = 0; ac < arow.getNumCells(); ac++) {
+                    var acell = arow.getCell(ac);
+                    acell.setBackgroundColor(bg)
+                        .editAsText().setText(sections.adjustmentsTable.rows[ar - 1][ac]).setFontSize(10);
+                    acell.setPaddingTop(10).setPaddingBottom(10).setPaddingLeft(12).setPaddingRight(12);
+                    acell.setWidth(ac === 0 ? 150 : 300);
+                }
+            }
+            body.appendParagraph('');
         }
 
-        // 調整建議表格
-        if (sections.adjustmentsTable && sections.adjustmentsTable.rows) {
-            var heading3 = body.appendParagraph(sections.adjustmentsTable.title || 'Content Adjustments');
-            heading3.setHeading(DocumentApp.ParagraphHeading.HEADING2);
-
-            var table3 = body.appendTable([sections.adjustmentsTable.headers].concat(sections.adjustmentsTable.rows));
-            table3.setBorderWidth(1);
-        }
-
-        // 大綱
+        // Outline
         if (sections.outlineEntries && sections.outlineEntries.length > 0) {
-            var heading4 = body.appendParagraph('Content Outline');
-            heading4.setHeading(DocumentApp.ParagraphHeading.HEADING2);
+            body.appendParagraph('Suggested Outline').setHeading(DocumentApp.ParagraphHeading.HEADING2);
+            for (var oi = 0; oi < sections.outlineEntries.length; oi++) {
+                var entry = sections.outlineEntries[oi];
+                var para;
+                if (entry && entry.level === 2) {
+                    para = body.appendParagraph('・' + entry.text);
+                    para.setHeading(DocumentApp.ParagraphHeading.NORMAL);
+                    para.editAsText().setFontSize(11).setBold(true);
+                } else {
+                    para = body.appendParagraph('- ' + (entry.text || entry));
+                    para.setHeading(DocumentApp.ParagraphHeading.NORMAL);
+                    para.setIndentStart(20);
+                    para.editAsText().setFontSize(10);
+                }
+            }
+        }
 
-            for (var i = 0; i < sections.outlineEntries.length; i++) {
-                body.appendListItem(sections.outlineEntries[i]);
+        // Internal links as list (URL + clicks)
+        if (sections.internalLinksList && sections.internalLinksList.length) {
+            body.appendParagraph('');
+            body.appendParagraph('Internal Link Suggestions').setHeading(DocumentApp.ParagraphHeading.HEADING2);
+            var tokensNote = sections.internalLinkTokens && sections.internalLinkTokens.length
+                ? 'Tokenized: ' + sections.internalLinkTokens.join(', ')
+                : '';
+            if (tokensNote) {
+                body.appendParagraph(tokensNote).editAsText().setFontSize(9).setForegroundColor('#7F8C8D');
+            }
+            for (var li = 0; li < sections.internalLinksList.length; li++) {
+                var linkItem = sections.internalLinksList[li];
+                var line = (li + 1) + '. ' + (linkItem.url || '') + (linkItem.clicks ? ' (Clicks: ' + linkItem.clicks + ')' : '');
+                var p = body.appendParagraph(line);
+                p.setHeading(DocumentApp.ParagraphHeading.NORMAL);
+                var t = p.editAsText();
+                t.setFontSize(10);
+                if (linkItem.url) t.setLinkUrl(linkItem.url);
+            }
+        }
+
+        // Coverage table
+        if (sections.coverageTable && sections.coverageTable.rows) {
+            body.appendParagraph('');
+            body.appendParagraph(sections.coverageTable.title || 'Keyword Data')
+                .setHeading(DocumentApp.ParagraphHeading.HEADING2);
+            var covData = [sections.coverageTable.headers].concat(sections.coverageTable.rows);
+            var covTable = body.appendTable(covData);
+            covTable.setBorderWidth(1).setBorderColor('#CCCCCC');
+
+            var covHeader = covTable.getRow(0);
+            for (var cc = 0; cc < covHeader.getNumCells(); cc++) {
+                var ccell = covHeader.getCell(cc);
+                ccell.setBackgroundColor('#4A90E2')
+                    .editAsText().setBold(true).setFontSize(10).setForegroundColor('#FFFFFF');
+                ccell.setPaddingTop(8).setPaddingBottom(8).setPaddingLeft(10).setPaddingRight(10);
+            }
+
+            for (var cr = 1; cr < covTable.getNumRows(); cr++) {
+                var crow = covTable.getRow(cr);
+                var cbg = cr % 2 === 1 ? '#FFFFFF' : '#F9F9F9';
+                for (var cc2 = 0; cc2 < crow.getNumCells(); cc2++) {
+                    var c2 = crow.getCell(cc2);
+                    c2.setBackgroundColor(cbg)
+                        .editAsText().setText(sections.coverageTable.rows[cr - 1][cc2]).setFontSize(9);
+                    c2.setPaddingTop(8).setPaddingBottom(8).setPaddingLeft(10).setPaddingRight(10);
+                }
             }
         }
     }
@@ -359,6 +439,22 @@ var DataProcessor = (function () {
      * 準備文檔段落（整合所有數據）
      */
     function prepareDocSections(pageUrl, searchRow, outline, analyzeData, contextResult, internalLinks) {
+        var linksList = [];
+        if (internalLinks && internalLinks.results && internalLinks.results.length) {
+            // 只要 URL 與 clicks，依 clicks 由大到小
+            var sorted = internalLinks.results.slice().sort(function (a, b) {
+                var ca = Number(a && a.clicks) || 0;
+                var cb = Number(b && b.clicks) || 0;
+                return cb - ca;
+            });
+            for (var i = 0; i < sorted.length; i++) {
+                linksList.push({
+                    url: Utils.decodeURISafe(sorted[i].page || ''),
+                    clicks: Utils.formatNumber(sorted[i].clicks)
+                });
+            }
+        }
+
         return {
             heroPage: Utils.decodeURISafe(pageUrl),
             heroPageUrl: String(pageUrl || ''),
@@ -368,6 +464,7 @@ var DataProcessor = (function () {
             adjustmentsTable: buildAdjustmentsTable(contextResult),
             internalLinksTable: buildInternalLinksTable(internalLinks),
             internalLinkTokens: internalLinks && internalLinks.tokens ? internalLinks.tokens : [],
+            internalLinksList: linksList,
             outlineEntries: parseOutlineEntries(outline)
         };
     }
@@ -477,7 +574,8 @@ var DataProcessor = (function () {
      */
     function buildAdjustmentsTable(contextResult) {
         var suggestions = contextResult && contextResult.suggestions ? contextResult.suggestions : [];
-        if (suggestions.length === 0) return null;
+
+        if (!suggestions || suggestions.length === 0) return null;
 
         var rows = [];
         for (var i = 0; i < suggestions.length; i++) {
@@ -573,6 +671,24 @@ function buildCompactAnalysisPayload(freshAnalysis) {
     return json;
 }
 
+// 生成簡短的人類可讀摘要（避免在 Sheet 填入冗長 JSON）
+function buildAnalysisSummary(searchRow) {
+    var parts = [];
+    if (searchRow && searchRow.best_query) {
+        parts.push('KW: ' + searchRow.best_query);
+    }
+    if (searchRow && searchRow.best_query_clicks) {
+        parts.push('Clicks: ' + searchRow.best_query_clicks);
+    }
+    if (searchRow && searchRow.best_query_position) {
+        parts.push('Pos: ' + searchRow.best_query_position);
+    }
+    var summary = parts.join(' | ');
+    if (!summary) summary = '分析完成';
+    if (summary.length > 80) summary = summary.slice(0, 77) + '...';
+    return summary;
+}
+
 // ============================================================
 // RepostLensController - 主控制器（UI 入口）
 // ============================================================
@@ -650,14 +766,17 @@ var RepostLensController = (function () {
             }
 
             // 獲取或生成分析
-            var analyzeData = Utils.safeJsonParse(analysisCell.getValue());
+            var analysisCellValue = analysisCell.getValue();
+            var analyzeData = null;
+            if (analysisCellValue && /^[\\[{]/.test(String(analysisCellValue).trim())) {
+                analyzeData = Utils.safeJsonParse(analysisCellValue);
+            }
             var analysisText = analyzeData && analyzeData.analysis ? analyzeData.analysis : '';
 
             if (!analysisText) {
                 var freshAnalysis = ReportService.analyzeOptimization(searchRow);
                 analysisText = freshAnalysis.analysis || '';
-                var compactPayload = buildCompactAnalysisPayload(freshAnalysis);
-                analysisCell.setValue(compactPayload);
+                analyzeData = freshAnalysis;
             }
 
             if (!analysisText) {
@@ -679,10 +798,11 @@ var RepostLensController = (function () {
                 internalLinks
             );
 
-            // 寫入預覽
-            var contextText = DataProcessor.buildAdjustmentsPreviewText(sections.adjustmentsTable);
-            contextCell.setValue(contextText);
-            docBodyCell.setValue('查看完整報告請點擊右側連結');
+            // 只在 Sheet 留下簡短摘要，避免佔滿儲存格
+            analysisCell.setValue(buildAnalysisSummary(searchRow));
+            // Sheet 中不再保留過程數據，只留簡短提示與 Doc 連結
+            contextCell.setValue('');
+            docBodyCell.setValue('');
 
             // 創建文檔
             var docName = 'RepostLens Draft - ' + (searchRow.best_query || host);
