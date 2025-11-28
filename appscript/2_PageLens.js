@@ -456,9 +456,32 @@ var HtmlTagAuditService = (function () {
         }
 
         if (assessmentId === 'KEYWORD_DENSITY_LOW' && details && details.density !== undefined) {
-            if (details.density < 0.5) description = '關鍵字密度過低';
-            else if (details.density > 6.0) description = '關鍵字密度過高';
-            else if (details.density > 2.5) description = '關鍵字密度偏高';
+            var densityRaw = Number(details.density);
+            var optimal = (details.standards && details.standards.optimal) || {};
+            var minOptimal = isNaN(Number(optimal.min)) ? 2.5 : Number(optimal.min);
+            var maxOptimal = isNaN(Number(optimal.max)) ? 15 : Number(optimal.max);
+            var derivedDensity = null;
+
+            // 如果上游提供關鍵字出現次數與總詞數，嘗試推算百分比，避免舊版/新版本單位不同
+            if (!isNaN(Number(details.keywordOccurrences)) && !isNaN(Number(details.totalWords)) && Number(details.totalWords) > 0) {
+                var keywordLength = isNaN(Number(details.keywordWordLength)) ? 1 : Math.max(1, Number(details.keywordWordLength));
+                derivedDensity = (Number(details.keywordOccurrences) * keywordLength / Number(details.totalWords)) * 100;
+            }
+
+            var densityPercent;
+            if (!isNaN(densityRaw)) {
+                // 新版 API 已以百分比返回；若數值過小且推算值較合理，採用推算值
+                densityPercent = densityRaw <= 1 && derivedDensity && derivedDensity > 1.5 ? derivedDensity : densityRaw;
+            } else if (derivedDensity !== null) {
+                densityPercent = derivedDensity;
+            }
+
+            if (densityPercent !== undefined && densityPercent !== null) {
+                var rangeText = minOptimal + '%-' + maxOptimal + '%';
+                if (densityPercent < minOptimal) description = '關鍵字密度過低（' + densityPercent.toFixed(1) + '%，建議 ' + rangeText + '）';
+                else if (densityPercent > maxOptimal) description = '關鍵字密度過高（' + densityPercent.toFixed(1) + '%，建議 ' + rangeText + '）';
+                else description = '關鍵字密度適中（' + densityPercent.toFixed(1) + '%）';
+            }
         }
 
         return description || '未知問題';
@@ -472,7 +495,7 @@ var HtmlTagAuditService = (function () {
             'H2_SYNONYMS_MISSING': 'H2 包含相關關鍵字',
             'IMAGES_MISSING_ALT': '圖片 Alt 文字完整',
             'KEYWORD_MISSING_FIRST_PARAGRAPH': '首段包含關鍵字',
-            'KEYWORD_DENSITY_LOW': '關鍵字密度適中',
+            'KEYWORD_DENSITY_LOW': '關鍵字密度適中（2.5%-15%）',
             'META_DESCRIPTION_NEEDS_IMPROVEMENT': 'Meta Description 包含關鍵字',
             'META_DESCRIPTION_MISSING': 'Meta Description 長度適中',
             'TITLE_NEEDS_IMPROVEMENT': 'Meta Title 長度適中',

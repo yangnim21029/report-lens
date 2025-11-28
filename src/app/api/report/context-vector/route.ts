@@ -5,7 +5,7 @@ import { buildContextVectorPrompt } from "./prompt";
 
 export const runtime = "nodejs";
 
-export type ContextVectorSuggestion = {
+type ContextVectorSuggestion = {
   before: string;
   whyProblemNow: string;
   adjustAsFollows: string;
