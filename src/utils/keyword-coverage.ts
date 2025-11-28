@@ -1,31 +1,15 @@
 import { getVertexTextModel } from "~/server/vertex/client";
+import { COVERAGE_API_URL } from "~/config";
+import type { GscStats, CoverageItem, KeywordCoverageResponse } from "~/types";
 
-export interface GscStats {
-  clicks: number;
-  impressions: number;
-  avgPosition?: number;
-}
-
-export interface CoverageItem {
-  text: string;
-  searchVolume: number | null;
-  gsc?: GscStats;
-}
-
-export interface KeywordCoverageResponse {
-  success: boolean;
-  covered: CoverageItem[];
-  uncovered: CoverageItem[];
-}
-
-const COVERAGE_API = "https://keyword-lens.vercel.app/api/url/coverage?url=";
+export type { GscStats, CoverageItem, KeywordCoverageResponse };
 
 /**
  * Fetch keyword coverage data for a URL.
  * Returns covered (with optional GSC stats) and uncovered keywords with search volume.
  */
 export async function fetchKeywordCoverage(url: string): Promise<KeywordCoverageResponse> {
-  const res = await fetch(COVERAGE_API + encodeURIComponent(url), {
+  const res = await fetch(COVERAGE_API_URL + encodeURIComponent(url), {
     // Let upstream set caching; always want fresh data during analysis
     cache: "no-store",
   });

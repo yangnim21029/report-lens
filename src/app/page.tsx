@@ -1,215 +1,20 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
-import { TaskPanel, type FlowStep, type StepStatus } from "../components/TaskPanel";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { TaskPanel } from "../components/TaskPanel";
+import { MindMapFlow } from "../components/MindMapFlow";
+import type { FlowStep, ContextSuggestion, Endpoint } from "~/types";
+import { api, formatApiError } from "~/lib/api-client";
+import {
+  DEFAULT_SITE,
+  DEFAULT_PAGE,
+  DEFAULT_BASE_URL,
+  DEFAULT_PERIOD_DAYS,
+  getDefaultStartDate,
+} from "~/config";
+import { buildEndpoints, pretty, deriveSiteFromUrl, sanitizeSegment } from "~/utils/helpers";
 
-type Endpoint = {
-  title: string;
-  path: string;
-  description: string;
-  sample: string;
-};
 
-type ContextSuggestion = {
-  before?: string;
-  whyProblemNow?: string;
-  adjustAsFollows?: string;
-  afterAdjust?: string | null;
-};
-
-const DEFAULT_SITE = "sc-domain:holidaysmart.io";
-const DEFAULT_PAGE =
-  "https://holidaysmart.io/hk/article/458268/%E5%B1%AF%E9%96%80";
-const DEFAULT_BASE_URL = "http://localhost:3000";
-
-function buildEndpoints(baseUrl: string): Endpoint[] {
-  const origin = baseUrl.replace(/\/$/, "");
-  return [
-    {
-      title: "站點清單",
-      path: "GET /api/sites",
-      description: "向上游 GSC DB 取得可用的 site token 陣列（無參數）。",
-      sample: `curl -sS '${origin}/api/sites' | jq`,
-    },
-    {
-      title: "站內列表查詢",
-      path: "POST /api/search/list",
-      description: "輸入 site，回傳該站過去 30 天（含 MoM）聚合的頁面表現。",
-      sample: `curl -sS '${origin}/api/search/list' \\\n  -H 'content-type: application/json' \\\n  --data-raw '{\"site\":\"sc-domain:holidaysmart.io\"}' | jq '.[0]'`,
-    },
-    {
-      title: "單頁查詢",
-      path: "POST /api/search/by-url",
-      description:
-        "輸入 site + page，支援 startDate (YYYY-MM-DD) 與 periodDays，預設近 14 天。",
-      sample: `curl -sS '${origin}/api/search/by-url' \\\n  -H 'content-type: application/json' \\\n  --data-raw '{\"site\":\"sc-domain:holidaysmart.io\",\"page\":\"https://holidaysmart.io/hk/article/458268/%E5%B1%AF%E9%96%80\",\"startDate\":\"2024-01-01\",\"periodDays\":14}' | jq`,
-    },
-    {
-      title: "語意分析",
-      path: "POST /api/optimize/analyze",
-      description:
-        "輸入 page 及 keyword stats（best_query、rank1~10 等），回傳 sections.quickWins / structuralChanges / rawAnalysis。",
-      sample: `curl -sS '${origin}/api/optimize/analyze' \\\n  -H 'content-type: application/json' \\\n  --data-raw '{\"page\":\"https://example.com/foo\",\"bestQuery\":\"關鍵字\",\"bestQueryClicks\":120,\"bestQueryPosition\":5.2}' | jq '.sections'`,
-    },
-    {
-      title: "Meta 標題提案",
-      path: "POST /api/metatag",
-      description:
-        "輸入 site + page (+ topic/ctrBenchmark/startDate/periodDays)，會先呼叫 by-url 拉資料，再用 OpenAI 產生標題建議與目標關鍵字。",
-      sample: `curl -sS '${origin}/api/metatag' \\\n  -H 'content-type: application/json' \\\n  --data-raw '{\"site\":\"sc-domain:holidaysmart.io\",\"page\":\"https://holidaysmart.io/hk/article/458268/%E5%B1%AF%E9%96%80\",\"topic\":\"主題\"}' | jq '{success, targetKeyword, report}'`,
-    },
-    {
-      title: "Context Vector",
-      path: "POST /api/report/context-vector",
-      description:
-        "輸入分析文字 + pageUrl，輸出 markdown 表格（原文片段 vs 建議調整）。",
-      sample: `curl -sS '${origin}/api/report/context-vector' \\\n  -H 'content-type: application/json' \\\n  --data-raw '{\"analysisText\":\"<analysis text>\",\"pageUrl\":\"https://example.com\"}' | jq`,
-    },
-  ];
-}
-
-function getDefaultStartDate() {
-  const end = new Date();
-  const start = new Date(end);
-  start.setDate(end.getDate() - 14);
-  return start.toISOString().split("T")[0]!;
-}
-
-function pretty(obj: unknown) {
-  if (obj === null || obj === undefined) return "";
-  try {
-    return JSON.stringify(obj, null, 2);
-  } catch {
-    return String(obj);
-  }
-}
-
-function deriveSiteFromUrl(url: string) {
-  try {
-    const u = new URL(url);
-    return `sc-domain:${u.hostname.replace(/^www\./i, "")}`;
-  } catch {
-    return DEFAULT_SITE;
-  }
-}
-
-function sanitizeSegment(value: unknown) {
-  if (typeof value !== "string") return "";
-  return value.replace(/\s+/g, " ").trim();
-}
-
-function MindMapFlow({
-  steps,
-  onSelect,
-  containerRef,
-}: {
-  steps: FlowStep[];
-  onSelect: (step: FlowStep, target: HTMLElement) => void;
-  containerRef?: RefObject<HTMLDivElement | null>;
-}) {
-  const height = 340;
-  const baseY = height / 2;
-  const amplitude = 80;
-  const spacing = 260;
-  const nodeWidth = 240;
-  const nodeHeight = 100;
-  const nodes = steps.map((step, idx) => {
-    const x = 120 + idx * spacing;
-    const y = baseY + (idx % 2 === 0 ? -amplitude : amplitude);
-    return { ...step, x, y };
-  });
-
-  const paths = nodes.slice(0, -1).map((node, idx) => {
-    const next = nodes[idx + 1]!;
-    const midX1 = node.x + spacing * 0.35;
-    const midX2 = next.x - spacing * 0.35;
-    const d = `M ${node.x} ${node.y} C ${midX1} ${node.y}, ${midX2} ${next.y}, ${next.x} ${next.y}`;
-    const isComplete = node.status === "done" && next.status !== "pending";
-    return { d, isComplete };
-  });
-
-  const statusStyles: Record<StepStatus, string> = {
-    done: "ring-2 ring-sky-500 shadow-lg shadow-sky-100 border-sky-200 bg-white scale-[1.02]",
-    active: "ring-2 ring-slate-300 border-slate-200 bg-white",
-    pending: "border-slate-200 bg-white/80 text-slate-500",
-  };
-
-  const totalWidth = 80 + (steps.length - 1) * spacing + nodeWidth + 40;
-
-  return (
-    <div
-      ref={containerRef}
-      className="relative w-full overflow-x-auto overflow-y-visible rounded-xl bg-white/70 px-4 py-6 ring-1 ring-slate-200"
-    >
-      <div className="relative" style={{ height, width: totalWidth }}>
-        <svg
-          width={totalWidth}
-          height={height}
-          viewBox={`0 0 ${totalWidth} ${height}`}
-          preserveAspectRatio="xMinYMid meet"
-          className="absolute inset-0"
-        >
-          {paths.map((p, i) => (
-            <path
-              key={`bg-${i}`}
-              d={p.d}
-              fill="none"
-              stroke="#dfe5ef"
-              strokeWidth={8}
-              strokeLinecap="round"
-            />
-          ))}
-          {paths.map((p, i) =>
-            p.isComplete ? (
-              <path
-                key={`fg-${i}`}
-                d={p.d}
-                fill="none"
-                stroke="url(#flowGradient)"
-                strokeWidth={8}
-                strokeLinecap="round"
-              />
-            ) : null,
-          )}
-          <defs>
-            <linearGradient id="flowGradient" x1="0%" y1="0%" x2="100%" y2="0%">
-              <stop offset="0%" stopColor="#60a5fa" />
-              <stop offset="100%" stopColor="#22d3ee" />
-            </linearGradient>
-          </defs>
-        </svg>
-        <div className="relative" style={{ height, width: totalWidth }}>
-          {nodes.map((node, idx) => (
-            <div
-              key={node.id}
-              className={`absolute flex -translate-x-1/2 -translate-y-1/2 cursor-pointer items-center gap-3 rounded-2xl border px-4 py-3 transition-all duration-200 hover:shadow-lg ${statusStyles[node.status]}`}
-              style={{
-                left: node.x,
-                top: node.y,
-                minWidth: nodeWidth,
-                minHeight: nodeHeight,
-              }}
-              onClick={(e) => onSelect(node, e.currentTarget)}
-            >
-              <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-slate-50 text-xl text-slate-500">
-                <div className="h-6 w-6 rounded-full border border-slate-300" />
-              </div>
-              <div className="flex flex-col">
-                <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                  {node.subtitle}
-                </span>
-                <span className="text-base font-bold text-slate-900">{node.title}</span>
-              </div>
-              {idx === nodes.length - 1 && (
-                <span className="absolute right-[-6px] top-1/2 h-3 w-3 -translate-y-1/2 rounded-full bg-sky-500 shadow" />
-              )}
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
 
 
 
@@ -220,7 +25,7 @@ export default function ApiDocsPage() {
   const [site, setSite] = useState(DEFAULT_SITE);
   const [pageUrl, setPageUrl] = useState(DEFAULT_PAGE);
   const [startDate, setStartDate] = useState(getDefaultStartDate);
-  const [periodDays, setPeriodDays] = useState(14);
+  const [periodDays, setPeriodDays] = useState(DEFAULT_PERIOD_DAYS);
   const [endpointStates, setEndpointStates] = useState<
     Record<
       string,
@@ -248,6 +53,8 @@ export default function ApiDocsPage() {
   const [flowCurrent, setFlowCurrent] = useState<FlowStep["id"] | null>(null);
   const [selectedStep, setSelectedStep] = useState<FlowStep | null>(null);
 
+  const [flowError, setFlowError] = useState<string | null>(null);
+
   useEffect(() => {
     if (typeof window !== "undefined") {
       setBaseUrl(window.location.origin);
@@ -260,19 +67,20 @@ export default function ApiDocsPage() {
     setContextSuggestions([]);
     setContextSearchRow(null);
     setContextAnalyzeResult(null);
+    setFlowError(null);
     setFlowCurrent("search");
+
     try {
       const siteFromUrl = deriveSiteFromUrl(pageUrl);
+
       // Step 1: search/by-url
-      const searchRes = await fetch("/api/search/by-url", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ site: siteFromUrl, page: pageUrl, startDate, periodDays }),
+      const searchJson = await api.post<any[]>("/api/search/by-url", {
+        site: siteFromUrl,
+        page: pageUrl,
+        startDate,
+        periodDays,
       });
-      const searchJson = await searchRes.json().catch(() => null);
-      if (!searchRes.ok) {
-        throw new Error(searchJson?.error || `Search failed: ${searchRes.status}`);
-      }
+
       if (!Array.isArray(searchJson) || !searchJson.length) {
         throw new Error("search/by-url 沒有回傳資料");
       }
@@ -287,14 +95,11 @@ export default function ApiDocsPage() {
         bestQueryClicks: pickedRow.best_query_clicks,
         bestQueryPosition: pickedRow.best_query_position,
       };
-      const analyzeRes = await fetch("/api/optimize/analyze", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(analyzePayload),
-      });
-      const analyzeJson = await analyzeRes.json().catch(() => null);
-      if (!analyzeRes.ok || analyzeJson?.success === false) {
-        throw new Error(analyzeJson?.error || `Analyze failed: ${analyzeRes.status}`);
+
+      const analyzeJson = await api.post<any>("/api/optimize/analyze", analyzePayload);
+
+      if (analyzeJson?.success === false) {
+        throw new Error(analyzeJson?.error || "Analyze failed");
       }
       setContextAnalyzeResult(analyzeJson);
       const analysisText =
@@ -304,22 +109,20 @@ export default function ApiDocsPage() {
 
       // Step 3: context-vector
       setFlowCurrent("context");
-      const contextRes = await fetch("/api/report/context-vector", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          analysisText,
-          pageUrl,
-        }),
+      const contextJson = await api.post<any>("/api/report/context-vector", {
+        analysisText,
+        pageUrl,
       });
-      const contextJson = await contextRes.json().catch(() => null);
-      if (!contextRes.ok || contextJson?.success === false) {
-        throw new Error(contextJson?.error || `Context-vector failed: ${contextRes.status}`);
+
+      if (contextJson?.success === false) {
+        throw new Error(contextJson?.error || "Context-vector failed");
       }
       setContextMarkdown(typeof contextJson?.markdown === "string" ? contextJson.markdown : null);
       setContextSuggestions(Array.isArray(contextJson?.suggestions) ? contextJson.suggestions : []);
     } catch (err) {
-      // Swallow error; flow state will remain on the step that failed
+      const errorMessage = formatApiError(err);
+      console.error("RepostLens Flow Error:", errorMessage, err);
+      setFlowError(errorMessage);
     } finally {
       setContextLoading(false);
       setFlowCurrent(null);
