@@ -236,6 +236,48 @@ var UrlKeywordFinder = (function () {
     var TARGET_COLUMN = 4;  // D 欄
 
     /**
+     * 將 API 回應轉為輸出字串
+     */
+    function formatKeywordInsights(json) {
+        if (!json || !json.data) return '';
+
+        var formatted = String(json.data.formatted || '').trim();
+        if (formatted) {
+            return removeHanSpaces(formatted);
+        }
+
+        var parsed = Array.isArray(json.data.parsed) ? json.data.parsed : [];
+        if (parsed.length) {
+            var lines = [];
+            for (var i = 0; i < parsed.length; i++) {
+                var item = parsed[i];
+                var keyword = item && item.keyword ? String(item.keyword) : '';
+                var sv = item && item.searchVolume ? item.searchVolume : '';
+                if (keyword) {
+                    var line = keyword;
+                    if (sv) line += ' (' + sv + ')';
+                    lines.push(line);
+                }
+            }
+            return removeHanSpaces(lines.join('\n'));
+        }
+
+        return '';
+    }
+
+    /**
+     * 去掉中文字間的空白
+     */
+    function removeHanSpaces(text) {
+        try {
+            return String(text || '').replace(/(\p{Script=Han})\s+(\p{Script=Han})/gu, '$1$2');
+        } catch (e) {
+            // 舊版 RegExp 若不支援 Unicode Script，就直接返回原始字串
+            return String(text || '');
+        }
+    }
+
+    /**
      * 處理 URLs 並填充關鍵字洞察
      */
     function processUrlsAndFillKeywords() {
@@ -268,7 +310,9 @@ var UrlKeywordFinder = (function () {
                     var payload = {
                         url: url,
                         region: 'HK',
-                        language: 'zh-TW'
+                        language: 'zh-TW',
+                        coverageLimit: 120,
+                        maxContentLength: 6000
                     };
 
                     Utils.log('正在處理第 ' + currentRow + ' 列的 URL: ' + url);
@@ -277,11 +321,12 @@ var UrlKeywordFinder = (function () {
                     var json = response.json();
 
                     var output;
-                    if (json && json.success && json.data && json.data.formatted) {
-                        output = json.data.formatted;
+                    if (json && json.success) {
+                        output = formatKeywordInsights(json);
+                        if (!output) output = 'API 返回空結果';
                         Utils.log('成功取得資料: ' + output);
                     } else {
-                        output = 'API 錯誤: ' + (json && json.message ? json.message : '未知錯誤');
+                        output = 'API 錯誤: ' + (json && (json.message || json.error) ? (json.message || json.error) : '未知錯誤');
                         Utils.log(output);
                     }
 

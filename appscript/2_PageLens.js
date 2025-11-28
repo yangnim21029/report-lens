@@ -653,16 +653,20 @@ var PageLensHtmlTagAudit = (function () {
             var targetUrl = String(values[rowIndex][urlColIndex] || '').trim();
             if (!targetUrl) continue;
 
-            var passValue = String(values[rowIndex][passColIndex] || '').trim();
+            var passValueRaw = values[rowIndex][passColIndex];
+            var passValue = String(passValueRaw || '').trim();
             var suggestionValue = String(values[rowIndex][suggestionColIndex] || '').trim();
+
+            // 已經通過的行（有通過時間或 Suggestion 標記 pass）一律跳過
+            var isAlreadyPassed = (suggestionValue || '').toLowerCase() === 'pass' || !!passValueRaw;
 
             var shouldProcess = false;
             if (isInitMode) {
-                // 初始化模式：處理 HtmlTagSuggestion 為空的行
-                shouldProcess = !suggestionValue;
+                // 初始化模式：處理 HtmlTagSuggestion 為空且未通過的行
+                shouldProcess = !isAlreadyPassed && !suggestionValue;
             } else {
                 // 正常模式：跳過已經 pass 的行
-                shouldProcess = (passValue !== 'pass');
+                shouldProcess = !isAlreadyPassed;
             }
 
             if (!shouldProcess) {
