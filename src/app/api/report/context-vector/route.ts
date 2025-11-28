@@ -53,6 +53,7 @@ export async function POST(req: Request) {
       articleHtml?: string;
       articleText?: string;
     };
+    const debugId = Math.random().toString(36).slice(2, 8);
 
     const pageUrlRaw = typeof body?.pageUrl === "string" ? body.pageUrl.trim() : "";
     const analysisText = body?.analysisText ?? "";
@@ -65,6 +66,13 @@ export async function POST(req: Request) {
         { status: 400 },
       );
     }
+
+    console.log("[context-vector][%s] incoming", debugId, {
+      hasAnalysis: !!analysisText,
+      pageUrl: pageUrlRaw || null,
+      providedTextLen: providedText.length,
+      providedHtmlLen: providedHtml.length,
+    });
 
     let articlePlain = providedText || (providedHtml ? toPlainText(providedHtml) : "");
     let captureError: unknown = null;
@@ -121,6 +129,8 @@ export async function POST(req: Request) {
 
     articlePlain = articlePlain?.slice(0, 8000) ?? "";
 
+    console.log("[context-vector][%s] articlePlain length", debugId, articlePlain.length);
+
     if (!articlePlain) {
       return NextResponse.json(
         {
@@ -149,8 +159,18 @@ export async function POST(req: Request) {
     const suggestions = parseContextVectorResponse(text).map(normalizeSuggestion);
     const markdown = buildMarkdownTable(suggestions);
 
+    console.log("[context-vector][%s] output", debugId, {
+      suggestions: suggestions.slice(0, 3).map((s) => ({
+        before: s.before.slice(0, 60),
+        why: s.whyProblemNow.slice(0, 80),
+        adjust: s.adjustAsFollows.slice(0, 80),
+      })),
+      markdownPreview: markdown.slice(0, 140),
+    });
+
     return NextResponse.json({ success: true, suggestions, markdown }, { status: 200 });
   } catch (err: unknown) {
+    console.error("[context-vector][error]", err);
     return NextResponse.json(
       { success: false, error: err instanceof Error ? err.message : "Unexpected error" },
       { status: 500 },

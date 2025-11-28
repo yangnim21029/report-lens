@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useCallback, useRef, useState } from "react";
+import { memo, useCallback, useMemo, useRef, useState } from "react";
 import { AnalysisModal } from "~/components/AnalysisModal";
 import { DataCardActions } from "~/components/DataCardActions";
 import { KeywordInsightsPanel } from "~/components/KeywordInsightsPanel";
@@ -17,6 +17,7 @@ type ContextVectorApiSuggestion = {
   before?: string;
   whyProblemNow?: string;
   adjustAsFollows?: string;
+  afterAdjust?: string | null;
 };
 
 type ContextVectorApiResponse = {
@@ -108,6 +109,7 @@ export const DataCard = memo(function DataCard({
   const [isGeneratingContext, setIsGeneratingContext] = useState(false);
   const [contextVector, setContextVector] = useState<string | null>(null);
   const [contextVectorError, setContextVectorError] = useState<string | null>(null);
+  const [contextVectorSuggestions, setContextVectorSuggestions] = useState<ContextVectorApiSuggestion[]>([]);
   const contextVectorPromiseRef = useRef<Promise<string> | null>(null);
   const [metaResult, setMetaResult] = useState<MetaGenerationResult | null>(null);
   const [isGeneratingMeta, setIsGeneratingMeta] = useState(false);
@@ -340,6 +342,7 @@ export const DataCard = memo(function DataCard({
 
     setIsGeneratingContext(true);
     setContextVectorError(null);
+    setContextVectorSuggestions([]);
 
     const promise = (async () => {
       try {
@@ -355,12 +358,15 @@ export const DataCard = memo(function DataCard({
         if (!json?.success) {
           throw new Error(json?.error || "Context vector API 回傳錯誤");
         }
+        const suggestions = Array.isArray(json?.suggestions) ? json.suggestions : [];
+        setContextVectorSuggestions(suggestions);
         const markdown = selectContextVectorMarkdown(json);
         setContextVector(markdown);
         return markdown;
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         setContextVectorError(message);
+        setContextVectorSuggestions([]);
         throw err;
       } finally {
         setIsGeneratingContext(false);
@@ -491,6 +497,17 @@ export const DataCard = memo(function DataCard({
       setIsRequestingOutline(false);
     }
   }, [ensureOutline]);
+
+  const contextVectorRows = useMemo(() => {
+    const rows = (contextVectorSuggestions || []).map((s) => {
+      const before = sanitizeSegment(s.before);
+      const why = sanitizeSegment(s.whyProblemNow);
+      const adjust = sanitizeSegment(s.adjustAsFollows);
+      const after = sanitizeSegment(s.afterAdjust);
+      return { before, why, adjust, after };
+    });
+    return rows.filter((r) => r.before && (r.adjust || r.after));
+  }, [contextVectorSuggestions]);
 
   const handleGenerateChatContent = useCallback(async () => {
     if (!analysis || !analysis.analysis) {
@@ -1126,6 +1143,36 @@ export const DataCard = memo(function DataCard({
                     <pre className="mt-[var(--space-sm)] max-h-60 overflow-y-auto whitespace-pre-wrap break-words text-[var(--gray-2)] text-[var(--text-xxs)] leading-relaxed">
                       {contextVector}
                     </pre>
+                    {contextVectorRows.length > 0 && (
+                      <div className="mt-[var(--space-sm)] overflow-x-auto rounded border border-[var(--gray-7)] bg-[var(--paper)]">
+                        <table className="min-w-full border-collapse text-left text-[var(--text-xxs)]">
+                          <thead>
+                            <tr className="bg-[var(--gray-9)] text-[var(--gray-3)]">
+                              <th className="px-[var(--space-sm)] py-[var(--space-xs)] font-bold">原文片段</th>
+                              <th className="px-[var(--space-sm)] py-[var(--space-xs)] font-bold">建議調整</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {contextVectorRows.map((row, idx) => (
+                              <tr key={`ctx-row-${idx}`} className={idx % 2 === 0 ? "bg-white" : "bg-[var(--gray-9)]"}>
+                                <td className="align-top px-[var(--space-sm)] py-[var(--space-xs)] text-[var(--gray-2)]">
+                                  {row.before}
+                                </td>
+                                <td className="align-top px-[var(--space-sm)] py-[var(--space-xs)] text-[var(--gray-3)]">
+                                  {row.why && <div className="font-semibold text-[var(--gray-3)]">{row.why}</div>}
+                                  {row.adjust && <div className="mt-[var(--space-xxs)] text-[var(--gray-2)]">{row.adjust}</div>}
+                                  {row.after && (
+                                    <div className="mt-[var(--space-xxs)] text-[var(--gray-4)]">
+                                      {row.after}
+                                    </div>
+                                  )}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
                   </>
                 )}
               </div>
